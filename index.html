@@ -409,6 +409,30 @@ function buildBracket(n, seeds = [], rng, trials) {
   return best.rounds;
 }
 
+/**
+ * 決勝を中央に置く並びを返す。左から 1回戦…決勝…1回戦。
+ * 各回戦の卓とシードは左右に半分ずつ分ける。決勝を含まないときは最後の回戦も左右に分ける。
+ */
+function bracketSides(rounds, shown) {
+  const last = shown[shown.length - 1];
+  const hasFinal = last === rounds.length - 1;
+  const outer = hasFinal ? shown.slice(0, -1) : shown;
+  const half = list => Math.ceil(list.length / 2);
+  const side = (r, pick) => ({
+    r,
+    tables: pick([...rounds[r].tables.keys()]),
+    byes: pick(rounds[r].byes),
+  });
+  const left = list => list.slice(0, half(list));
+  const right = list => list.slice(half(list));
+  const center = hasFinal ? [{ r: last, tables: [...rounds[last].tables.keys()], byes: rounds[last].byes }] : [];
+  return [
+    ...outer.map(r => side(r, left)),
+    ...center,
+    ...outer.slice().reverse().map(r => side(r, right)),
+  ].filter(s => s.tables.length || s.byes.length);
+}
+
 /** 卓の中で「同じ卓の出身者」が同席している枠の組(再戦確定)を返す */
 function sameSourcePairs(table) {
   const pairs = [];
@@ -767,9 +791,9 @@ function byeTitle(r) {
   return `シード(${r + 2}回戦から出場)`;
 }
 
-function byesHtml(round, r) {
-  if (!round.byes.length) return '';
-  const items = round.byes.map(ref => {
+function byesHtml(byes, r) {
+  if (!byes.length) return '';
+  const items = byes.map(ref => {
     const id = resolveRef(ref, state.results);
     const name = id === null ? refLabel(ref, r) : state.players[id];
     return `<li ${id === null ? '' : `data-player="${id}"`}>${esc(name)}</li>`;
@@ -799,20 +823,28 @@ function renderBracket() {
   });
   const finalRes = state.results[`${state.rounds.length - 1}-0`];
   const champion = finalRes && finalRes.first !== undefined ? finalRes.first : null;
+  const sides = bracketSides(state.rounds, state.rounds.map((_, r) => r));
+  const counted = new Set();
+  const roundCount = r => {
+    if (counted.has(r)) return '';
+    counted.add(r);
+    const round = state.rounds[r];
+    return `<span>${round.tables.length}卓${round.byes.length ? `・シード${round.byes.length}` : ''}</span>`;
+  };
   app.innerHTML = `
     ${champion !== null ? `<div class="banner">優勝: ${esc(state.players[champion])}${finalRes.second !== undefined ? ` / 準優勝: ${esc(state.players[finalRes.second])}` : ''}</div>` : ''}
     ${notice ? `<div class="notice" style="margin:0 0 12px">${esc(notice)}</div>` : ''}
     <div class="bracket">
-      ${state.rounds.map((round, r) => `
+      ${sides.map(({ r, tables, byes }) => `
         <section class="round">
-          <div class="round-head"><h2>${roundName(r)}</h2><span>${round.tables.length}卓${round.byes.length ? `・シード${round.byes.length}` : ''}</span></div>
+          <div class="round-head"><h2>${roundName(r)}</h2>${roundCount(r)}</div>
           <div class="round-body">
-            ${byesHtml(round, r)}
-            ${round.tables.map((t, i) => tableHtml(t, r, i)).join('')}
+            ${byesHtml(byes, r)}
+            ${tables.map(t => tableHtml(state.rounds[r].tables[t], r, t)).join('')}
           </div>
         </section>`).join('')}
     </div>
-    <p class="help">各卓の1位・2位を押すと次の卓に名前が入ります。もう一度押すと取り消せます。名前にカーソルを合わせると同じ人が光ります。線は回戦の流れを表し、誰がどこから来たかは席の「A卓1位」などで確認できます。</p>`;
+    <p class="help">各卓の1位・2位を押すと次の卓に名前が入ります。もう一度押すと取り消せます。名前にカーソルを合わせると同じ人が光ります。線は回戦の流れを表し、勝ち上がると左右の反対側の卓に入ることもあります。誰がどこから来たかは席の「A卓1位」などで確認できます。</p>`;
   drawScreenLinks();
 }
 
@@ -1091,7 +1123,7 @@ designSlot.addEventListener('click', e => {
 /* ---------- 画像保存 ---------- */
 const FONT_SANS = '"Hiragino Kaku Gothic ProN", "Yu Gothic UI", "Yu Gothic", Meiryo, sans-serif';
 const FONT_SERIF = '"Hiragino Mincho ProN", "Yu Mincho", serif';
-const IMG = { w: 1920, h: 1080, margin: 24, cardH: 88, cardGap: 16, gap: 16, blockGap: 12, colW: 256, head: 44, tableHead: 28, seat: 40, warnLine: 17, maxScale: 2, byesPerBlock: 12, roundGap: 44 };
+const IMG = { w: 1920, h: 1080, margin: 24, cardH: 88, cardGap: 16, gap: 16, blockGap: 12, colW: 256, head: 44, tableHead: 28, seat: 40, warnLine: 17, maxScale: 2, byesPerBlock: 12, roundGap: 44, gridColW: 256, sidesColW: 184 };
 
 /** 高さlimitに収まるようにブロックを列へ詰める */
 function packColumns(blocks, limit) {
@@ -1119,13 +1151,13 @@ function fitLayout(sections, availW, availH) {
   let best = null;
   for (let limit = tallest; limit <= total + 1; limit += 20) {
     const columns = [];
-    sections.forEach(section => {
-      packColumns(section.blocks, limit).forEach((blocks, i) => columns.push({ r: section.r, label: i === 0, blocks }));
+    sections.forEach((section, s) => {
+      packColumns(section.blocks, limit).forEach((blocks, i) => columns.push({ r: section.r, section: s, label: i === 0, count: section.count, blocks }));
     });
     // 回戦の境目は線を引くので広めに空ける
     let x = 0;
     columns.forEach((col, i) => {
-      if (i) x += IMG.colW + (col.r === columns[i - 1].r ? IMG.gap : IMG.roundGap);
+      if (i) x += IMG.colW + (col.section === columns[i - 1].section ? IMG.gap : IMG.roundGap);
       col.x = x;
       col.height = col.blocks.reduce((sum, b) => sum + b.height + IMG.blockGap, 0) - IMG.blockGap;
     });
@@ -1155,6 +1187,7 @@ function drawRoundLinks(ctx, columns, theme) {
   ctx.lineWidth = 2;
   columns.forEach((col, i) => {
     const next = columns[i + 1];
+    // 同じ回戦の列どうし(「2回戦まで」の中央など)は線でつながない
     if (!next || next.r === col.r) return;
     const from = centers(col), to = centers(next);
     const barX = next.x - IMG.roundGap / 2;
@@ -1217,8 +1250,8 @@ function tableBlock(ctx, table, r, t) {
   return { kind: 'table', table, r, t, warnLines, height };
 }
 /** シードの一覧。人数が多いときは列をまたげるよう分割する。 */
-function byeBlocks(round, r) {
-  const names = round.byes.map(ref => {
+function byeBlocks(byes, r) {
+  const names = byes.map(ref => {
     const id = resolveRef(ref, state.results);
     return id === null ? refLabel(ref, r) : state.players[id];
   });
@@ -1354,13 +1387,21 @@ async function renderImage(target) {
   const finalRes = state.results[`${state.rounds.length - 1}-0`];
   const measure = document.createElement('canvas').getContext('2d');
   const { shown, label: scopeLabel } = exportScope(target);
+  // 左右に分けると列が増えるので、卓を細くして文字を大きくする
+  IMG.colW = shown.length > 1 ? IMG.sidesColW : IMG.gridColW;
 
   // 回戦ごとに載せるものを用意し、1920×1080に一番大きく入る並べ方を探す
-  const sections = shown.map(r => {
-    const round = state.rounds[r];
-    const blocks = round.tables.map((table, t) => tableBlock(measure, table, r, t));
-    blocks.unshift(...byeBlocks(round, r));
-    return { r, blocks };
+  const sides = shown.length > 1
+    ? bracketSides(state.rounds, shown)
+    : [{ r: shown[0], tables: [...state.rounds[shown[0]].tables.keys()], byes: state.rounds[shown[0]].byes }];
+  const counted = new Set();
+  const sections = sides.map(({ r, tables, byes }) => {
+    const blocks = tables.map(t => tableBlock(measure, state.rounds[r].tables[t], r, t));
+    blocks.unshift(...byeBlocks(byes, r));
+    // 卓数などの表示は同じ回戦で1回だけ
+    const count = !counted.has(r);
+    counted.add(r);
+    return { r, blocks, count };
   });
   const bodyY = IMG.margin + IMG.cardH + IMG.cardGap;
   const availW = IMG.w - IMG.margin * 2;
@@ -1440,7 +1481,7 @@ async function renderImage(target) {
       const nameW = ctx.measureText(roundName(col.r)).width;
       ctx.fillStyle = theme.onBgMuted;
       ctx.font = `12px ${FONT_SANS}`;
-      ctx.fillText(`${round.tables.length}卓${round.byes.length ? `・シード${round.byes.length}` : ''}`, x + nameW + 8, 13);
+      if (col.count) ctx.fillText(`${round.tables.length}卓${round.byes.length ? `・シード${round.byes.length}` : ''}`, x + nameW + 8, 13);
     }
     ctx.fillStyle = theme.roundLine;
     ctx.fillRect(x, 28, IMG.colW, 2);

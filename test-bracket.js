@@ -8,8 +8,8 @@ const html = fs.readFileSync(path.join(__dirname, 'index.html'), 'utf8');
 const code = html.split('/*LOGIC-START*/')[1].split('/*LOGIC-END*/')[0];
 const ctx = { crypto: require('crypto').webcrypto, Uint32Array, Math, Set, Array };
 vm.createContext(ctx);
-vm.runInContext(code + '\nthis.api={parseNames,findDuplicates,tableLabel,roundShape,buildBracket,normalizeSeeds,sameSourcePairs,resolveRef,pruneResults,rematchesInTable,extractColors,buildPalettes,themeFrom,contrastRatio};', ctx);
-const { parseNames, findDuplicates, tableLabel, roundShape, buildBracket, normalizeSeeds, sameSourcePairs, resolveRef, pruneResults, rematchesInTable, extractColors, buildPalettes, themeFrom, contrastRatio } = ctx.api;
+vm.runInContext(code + '\nthis.api={parseNames,findDuplicates,tableLabel,roundShape,buildBracket,bracketSides,normalizeSeeds,sameSourcePairs,resolveRef,pruneResults,rematchesInTable,extractColors,buildPalettes,themeFrom,contrastRatio};', ctx);
+const { parseNames, findDuplicates, tableLabel, roundShape, buildBracket, bracketSides, normalizeSeeds, sameSourcePairs, resolveRef, pruneResults, rematchesInTable, extractColors, buildPalettes, themeFrom, contrastRatio } = ctx.api;
 
 // 配色: 白地に赤と青のロゴから、白より赤・青を優先して拾う
 {
@@ -182,6 +182,34 @@ for (const n of [16, 40, 64]) {
       assert.deepStrictEqual(seats, seats.slice().sort((a, b) => a - b), `n=${n} r=${r + 1} 席の順`);
     });
   });
+}
+
+// 決勝を中央に置く並び
+{
+  const r32 = buildBracket(32);
+  const all = bracketSides(r32, [0, 1, 2, 3]);
+  assert.deepStrictEqual(Array.from(all, s => s.r), [0, 1, 2, 3, 2, 1, 0]);
+  assert.deepStrictEqual(Array.from(all[0].tables), [0, 1, 2, 3]);
+  assert.deepStrictEqual(Array.from(all[6].tables), [4, 5, 6, 7]);
+  assert.deepStrictEqual(Array.from(all[3].tables), [0]);
+  // 決勝がなければ最後の回戦を左右に分ける
+  assert.deepStrictEqual(Array.from(bracketSides(r32, [0, 1]), s => s.r), [0, 1, 1, 0]);
+  // シードも左右に半分ずつ
+  const r40 = bracketSides(buildBracket(40), [0, 1, 2, 3, 4]);
+  assert.strictEqual(r40[0].byes.length, 12);
+  assert.strictEqual(r40[r40.length - 1].byes.length, 12);
+  // 全人数で、卓とシードの過不足がない。空の側は作らない。
+  for (let n = 4; n <= 64; n++) {
+    const rounds = buildBracket(n, [], undefined, 1);
+    const sides = bracketSides(rounds, rounds.map((_, r) => r));
+    assert.ok(sides.every(s => s.tables.length || s.byes.length), `n=${n} 空の側`);
+    rounds.forEach((round, r) => {
+      const mine = sides.filter(s => s.r === r);
+      const tables = Array.from(mine).flatMap(s => Array.from(s.tables)).sort((a, b) => a - b);
+      assert.deepStrictEqual(Array.from(tables), Array.from(round.tables.keys()), `n=${n} r=${r} 卓の過不足`);
+      assert.strictEqual(mine.reduce((sum, s) => sum + s.byes.length, 0), round.byes.length, `n=${n} r=${r} シードの過不足`);
+    });
+  }
 }
 
 // シード指定の整理: いない人を外し、枠を超えた分は後ろから外し、重複はまとめる
