@@ -171,6 +171,19 @@ for (const [n, each] of [[40, 1], [48, 2]]) {
   });
 }
 
+// 表の並び: 席は元の卓順でシードは最後、卓も先頭の席の順に並ぶ
+for (const n of [16, 40, 64]) {
+  const order = s => (s.t === undefined ? Infinity : s.t * 2 + s.rank);
+  buildBracket(n).slice(1).forEach((round, r) => {
+    const firsts = Array.from(round.tables, t => order(t.slots[0]));
+    assert.deepStrictEqual(firsts, firsts.slice().sort((a, b) => a - b), `n=${n} r=${r + 1} 卓の順`);
+    round.tables.forEach(t => {
+      const seats = Array.from(t.slots, order);
+      assert.deepStrictEqual(seats, seats.slice().sort((a, b) => a - b), `n=${n} r=${r + 1} 席の順`);
+    });
+  });
+}
+
 // シード指定の整理: いない人を外し、枠を超えた分は後ろから外し、重複はまとめる
 assert.deepStrictEqual([...normalizeSeeds(['a', 'b', 'c', 'd'], ['b', 'x', 'c', 'b', 'd'], 2)], ['b', 'c']);
 assert.deepStrictEqual([...normalizeSeeds(['a', 'b'], ['a'], 0)], []);
