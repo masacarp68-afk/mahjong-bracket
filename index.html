@@ -1,0 +1,1349 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>麻雀トーナメント表</title>
+<style>
+  :root {
+    --bg: #f4f0e6;
+    --paper: #fffdf8;
+    --ink: #24231f;
+    --muted: #6d6a60;
+    --line: #d9d3c3;
+    --felt: #1f5c4a;
+    --felt-soft: #e2eee8;
+    --accent: #b5361f;
+    --accent-soft: #f8e6e0;
+    --warn: #8a5a00;
+    --warn-soft: #fbf0d4;
+    --radius: 8px;
+    --on-bg: #24231f;
+    --on-bg-muted: #6d6a60;
+    --round-line: #1f5c4a;
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0;
+    background-color: var(--bg);
+    background-attachment: fixed;
+    color: var(--ink);
+    font-family: "Hiragino Kaku Gothic ProN", "Yu Gothic UI", "Yu Gothic", Meiryo, sans-serif;
+    font-size: 15px;
+    line-height: 1.6;
+  }
+  header {
+    background: var(--felt);
+    color: #fff;
+    padding: 14px 20px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  h1 {
+    margin: 0;
+    font-family: "Hiragino Mincho ProN", "Yu Mincho", serif;
+    font-size: 22px;
+    letter-spacing: .08em;
+  }
+  header .info { font-size: 13px; opacity: .85; margin-right: auto; }
+  main { padding: 20px; }
+
+  button {
+    font: inherit;
+    cursor: pointer;
+    border-radius: 6px;
+    border: 1px solid var(--line);
+    background: var(--paper);
+    color: var(--ink);
+    padding: 6px 14px;
+  }
+  button:hover { border-color: var(--felt); }
+  button:focus-visible, textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 700; padding: 10px 28px; font-size: 16px; }
+  button.primary:disabled { background: var(--line); border-color: var(--line); color: var(--muted); cursor: not-allowed; }
+  header button { background: transparent; color: #fff; border-color: rgba(255,255,255,.5); font-size: 13px; }
+  header button:hover { border-color: #fff; }
+  header button.confirming { background: var(--accent); border-color: var(--accent); }
+
+  /* 入力画面 */
+  .setup { max-width: 620px; margin: 0 auto; }
+  .setup h2 { font-size: 17px; margin: 0 0 4px; color: var(--on-bg); }
+  .setup p { margin: 0 0 12px; color: var(--on-bg-muted); font-size: 14px; }
+  textarea {
+    width: 100%;
+    min-height: 300px;
+    padding: 12px;
+    font: inherit;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    background: var(--paper);
+    color: var(--ink);
+    resize: vertical;
+  }
+  .setup-foot { display: flex; align-items: center; gap: 16px; margin-top: 12px; flex-wrap: wrap; }
+  .count { font-weight: 700; color: var(--on-bg); }
+  .preview { color: var(--on-bg-muted); font-size: 13px; }
+  .notice { margin-top: 12px; padding: 8px 12px; border-radius: 6px; font-size: 13px; background: var(--warn-soft); color: var(--warn); }
+
+  /* トーナメント表 */
+  .banner {
+    margin-bottom: 16px;
+    padding: 10px 16px;
+    background: var(--accent-soft);
+    border-left: 4px solid var(--accent);
+    border-radius: 4px;
+    font-weight: 700;
+  }
+  .bracket { display: flex; gap: 16px; overflow-x: auto; padding-bottom: 12px; align-items: flex-start; }
+  .round { flex: 0 0 256px; }
+  .round-head {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    margin-bottom: 10px;
+    padding-bottom: 6px;
+    border-bottom: 2px solid var(--round-line);
+  }
+  .round-head h2 { margin: 0; font-size: 16px; font-family: "Hiragino Mincho ProN", "Yu Mincho", serif; color: var(--on-bg); }
+  .round-head span { font-size: 12px; color: var(--on-bg-muted); }
+  .table {
+    background: var(--paper);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    margin-bottom: 12px;
+    overflow: hidden;
+  }
+  .table.done { border-color: var(--felt); }
+  .table-head {
+    display: flex;
+    justify-content: space-between;
+    padding: 4px 10px;
+    background: var(--felt-soft);
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--felt);
+  }
+  .table-head small { font-weight: 400; color: var(--muted); }
+  .seat {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 5px 6px 5px 10px;
+    border-top: 1px solid var(--line);
+    min-height: 38px;
+  }
+  .seat-name { flex: 1; min-width: 0; overflow-wrap: anywhere; font-size: 14px; }
+  .seat-name.pending { color: var(--muted); font-size: 13px; }
+  .seat-origin { display: block; font-size: 11px; color: var(--muted); line-height: 1.3; }
+  .seat.hl { background: var(--warn-soft); }
+  .rank-btn { padding: 1px 7px; font-size: 12px; flex: none; color: var(--muted); }
+  .rank-btn[aria-pressed="true"] { background: var(--felt); border-color: var(--felt); color: #fff; font-weight: 700; }
+  .rematch { padding: 4px 10px; font-size: 12px; background: var(--warn-soft); color: var(--warn); border-top: 1px solid var(--line); }
+  .byes { margin-bottom: 12px; padding: 8px 10px; background: var(--paper); border: 1px dashed var(--line); border-radius: var(--radius); font-size: 13px; }
+  .byes strong { display: block; font-size: 12px; color: var(--accent); }
+  .byes ul { margin: 2px 0 0; padding: 0; list-style: none; }
+  .byes li[data-player] { cursor: default; }
+  .byes li.hl { background: var(--warn-soft); }
+  .help { margin-top: 12px; font-size: 13px; color: var(--on-bg-muted); }
+
+  /* デザイン・画像保存 */
+  #design-slot:not(:empty) { padding: 20px 20px 0; }
+  .toolbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+  .toolbar select, .toolbar button { font: inherit; }
+  .toolbar select { padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--paper); color: var(--ink); }
+  .toolbar .save { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 700; }
+  .export-status { font-size: 13px; color: var(--on-bg); }
+  .design-panel { background: var(--paper); border: 1px solid var(--line); border-radius: var(--radius); margin-bottom: 12px; }
+  .design-panel summary { cursor: pointer; padding: 8px 12px; font-weight: 700; }
+  .design-body { padding: 4px 12px 12px; display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
+  .field { min-width: 0; }
+  .field-label { display: block; font-size: 13px; font-weight: 700; margin-bottom: 4px; }
+  .field input[type="text"] { width: 100%; padding: 6px 8px; font: inherit; border: 1px solid var(--line); border-radius: 6px; background: #fff; color: var(--ink); }
+  .field .row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .file-button { display: inline-block; padding: 6px 14px; border: 1px solid var(--line); border-radius: 6px; background: var(--paper); cursor: pointer; }
+  .file-button:hover { border-color: var(--felt); }
+  .file-button:focus-within { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .file-button input { position: absolute; width: 1px; height: 1px; opacity: 0; }
+  .logo-thumb { height: 36px; max-width: 96px; object-fit: contain; }
+  .chip { font-size: 13px; padding: 4px 10px; }
+  .chip[aria-pressed="true"] { background: var(--felt); border-color: var(--felt); color: #fff; font-weight: 700; }
+  .swatch { display: inline-flex; vertical-align: -2px; margin-right: 6px; border: 1px solid rgba(0,0,0,.25); border-radius: 3px; overflow: hidden; }
+  .swatch i { display: block; width: 12px; height: 12px; }
+  .color-input { display: inline-flex; align-items: center; gap: 4px; font-size: 13px; }
+  .color-input input { width: 36px; height: 28px; padding: 1px; border: 1px solid var(--line); border-radius: 4px; background: #fff; cursor: pointer; }
+  .event-head { display: flex; align-items: center; gap: 14px; background: var(--paper); border: 1px solid var(--line); border-radius: var(--radius); padding: 10px 14px; margin-bottom: 4px; }
+  .event-head img { height: 56px; max-width: 140px; object-fit: contain; flex: none; }
+  .event-head strong { font-family: "Hiragino Mincho ProN", "Yu Mincho", serif; font-size: 22px; overflow-wrap: anywhere; min-width: 0; }
+  @media (max-width: 600px) {
+    main { padding: 16px; }
+    #design-slot:not(:empty) { padding: 16px 16px 0; }
+    .round { flex-basis: 232px; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>麻雀トーナメント表</h1>
+  <span class="info" id="info"></span>
+  <span id="header-actions"></span>
+</header>
+<div id="design-slot"></div>
+<main id="app"></main>
+
+<script>
+/*LOGIC-START*/
+function secureRandom() {
+  if (typeof crypto !== 'undefined' && crypto.getRandomValues) {
+    return crypto.getRandomValues(new Uint32Array(1))[0] / 4294967296;
+  }
+  return Math.random();
+}
+
+function shuffled(items, rng) {
+  const a = items.slice();
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(rng() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+/** 貼り付けられた文字列を名前の一覧にする。改行・タブ・カンマで区切る(姓名の間の空白は残す)。 */
+function parseNames(text) {
+  return text
+    .split(/[\r\n\t,、，]+/)
+    .map(s => s.replace(/^[\s　]+|[\s　]+$/g, ''))
+    .filter(Boolean);
+}
+
+function findDuplicates(names) {
+  const seen = new Set(), dup = new Set();
+  names.forEach(n => (seen.has(n) ? dup.add(n) : seen.add(n)));
+  return [...dup];
+}
+
+/** 0→A, 25→Z, 26→AA */
+function tableLabel(i) {
+  let s = '';
+  for (let n = i + 1; n > 0; n = Math.floor((n - 1) / 26)) {
+    s = String.fromCharCode(65 + (n - 1) % 26) + s;
+  }
+  return s;
+}
+
+/** K人の回の卓構成。端数1〜2人はシード、3人は3人打ち卓。4人以下は決勝。 */
+function roundShape(k) {
+  if (k <= 4) return { sizes: [k], byes: 0 };
+  const sizes = new Array(Math.floor(k / 4)).fill(4);
+  const r = k % 4;
+  if (r === 3) { sizes.push(3); return { sizes, byes: 0 }; }
+  return { sizes, byes: r };
+}
+
+function overlapCount(a, b) {
+  let n = 0;
+  a.anc.forEach(x => { if (b.anc.has(x)) n++; });
+  return n;
+}
+
+function groupScore(members) {
+  let score = 0, firsts = 0, seconds = 0;
+  for (let i = 0; i < members.length; i++) {
+    if (members[i].rank === 1) firsts++;
+    if (members[i].rank === 2) seconds++;
+    for (let j = i + 1; j < members.length; j++) {
+      if (members[i].last && members[i].last === members[j].last) score += 1000; // 再戦が確定
+      else score += overlapCount(members[i], members[j]) * 10; // 再戦の可能性
+    }
+  }
+  return score + Math.abs(firsts - seconds) * 3;
+}
+
+function byeScore(members) {
+  let score = 0;
+  const lasts = new Set();
+  members.forEach(m => {
+    if (m.byes > 0) score += 200; // 同じ枠が2回続けてシードにならないように
+    if (m.last) {
+      if (lasts.has(m.last)) score += 500;
+      lasts.add(m.last);
+    }
+  });
+  return score;
+}
+
+/** 1回戦の卓が偶数で端数なしのときの基本形: A1・C1・B2・D2 / B1・D1・A2・C2 */
+function crossTables(slots) {
+  const firsts = slots.filter(s => s.rank === 1);
+  const seconds = slots.filter(s => s.rank === 2);
+  const m = firsts.length / 2;
+  const tables = [];
+  for (let j = 0; j < m; j++) {
+    const n = (j + 1) % m;
+    tables.push([firsts[j], seconds[n], firsts[j + m], seconds[n + m]]);
+  }
+  return tables;
+}
+
+function isCleanCross(slots) {
+  const k = slots.length;
+  if (k % 4 !== 0) return false;
+  const firsts = slots.filter(s => s.rank === 1).length;
+  const seconds = slots.filter(s => s.rank === 2).length;
+  return firsts === k / 2 && seconds === k / 2 && slots.every(s => s.byes === 0);
+}
+
+/** 山登りで1回戦分の席を決める */
+function searchRound(slots, rng) {
+  const { sizes, byes } = roundShape(slots.length);
+  const order = shuffled(slots, rng);
+  // シードは未シードの枠を優先。残りを空いている中で最も点の低い卓へ。
+  const pool = order.slice().sort((a, b) => a.byes - b.byes);
+  const byeList = pool.slice(0, byes);
+  const rest = order.filter(s => !byeList.includes(s));
+  const groups = sizes.map(() => []);
+  rest.forEach(slot => {
+    let best = -1, bestDelta = Infinity;
+    groups.forEach((g, i) => {
+      if (g.length >= sizes[i]) return;
+      const delta = groupScore(g.concat(slot)) - groupScore(g) + rng() * 0.01;
+      if (delta < bestDelta) { bestDelta = delta; best = i; }
+    });
+    groups[best].push(slot);
+  });
+
+  const bins = groups.concat([byeList]);
+  const binScore = i => (i === groups.length ? byeScore(bins[i]) : groupScore(bins[i]));
+  let improved = true;
+  while (improved) {
+    improved = false;
+    for (let a = 0; a < bins.length; a++) {
+      for (let b = a + 1; b < bins.length; b++) {
+        for (let i = 0; i < bins[a].length; i++) {
+          for (let j = 0; j < bins[b].length; j++) {
+            const before = binScore(a) + binScore(b);
+            [bins[a][i], bins[b][j]] = [bins[b][j], bins[a][i]];
+            if (binScore(a) + binScore(b) < before) improved = true;
+            else [bins[a][i], bins[b][j]] = [bins[b][j], bins[a][i]];
+          }
+        }
+      }
+    }
+  }
+  return { groups, byeList };
+}
+
+function buildOnce(n, rng) {
+  const order = shuffled([...Array(n).keys()], rng);
+  const rounds = [];
+  let total = 0;
+
+  // 1回戦: 抽選順にそのまま座る。余りがシード。
+  const first = roundShape(n);
+  let cursor = 0;
+  let current = first.sizes.map(size => {
+    const seated = order.slice(cursor, cursor + size).map(p => ({ ref: { p }, last: null, anc: new Set(), rank: 0, byes: 0 }));
+    cursor += size;
+    return seated;
+  });
+  let byeList = order.slice(cursor).map(p => ({ ref: { p }, last: null, anc: new Set(), rank: 0, byes: 0 }));
+
+  for (let r = 0; ; r++) {
+    rounds.push({
+      tables: current.map(group => ({ slots: group.map(s => s.ref) })),
+      byes: byeList.map(s => s.ref),
+    });
+    if (current.length === 1 && byeList.length === 0) break; // 決勝
+
+    // 次の回へ進む枠を作る
+    const next = [];
+    current.forEach((group, t) => {
+      const anc = new Set([`${r}-${t}`]);
+      group.forEach(s => s.anc.forEach(x => anc.add(x)));
+      next.push(
+        { ref: { r, t, rank: 1 }, last: `${r}-${t}`, anc, rank: 1, byes: 0 },
+        { ref: { r, t, rank: 2 }, last: `${r}-${t}`, anc, rank: 2, byes: 0 }
+      );
+    });
+    byeList.forEach(s => next.push({ ...s, byes: s.byes + 1 }));
+
+    if (r === 0 && isCleanCross(next)) {
+      current = crossTables(next);
+      byeList = [];
+    } else if (next.length <= 4) {
+      current = [next];
+      byeList = [];
+    } else {
+      const found = searchRound(next, rng);
+      current = found.groups;
+      byeList = found.byeList;
+    }
+    current.forEach(g => { total += groupScore(g); });
+    total += byeScore(byeList);
+  }
+  return { rounds, total };
+}
+
+/** 全回戦の枠を作る。何通りも試して、再戦が一番少ない表を採用する。 */
+function buildBracket(n, rng, trials) {
+  if (n < 4) throw new Error('参加者は4人以上必要です');
+  const random = rng || secureRandom;
+  const count = trials || (n > 32 ? 60 : 200);
+  let best = null;
+  for (let i = 0; i < count; i++) {
+    const candidate = buildOnce(n, random);
+    if (!best || candidate.total < best.total) best = candidate;
+  }
+  return best.rounds;
+}
+
+/** 卓の中で「同じ卓の出身者」が同席している枠の組(再戦確定)を返す */
+function sameSourcePairs(table) {
+  const pairs = [];
+  table.slots.forEach((a, i) => {
+    table.slots.slice(i + 1).forEach(b => {
+      if (a.r !== undefined && a.r === b.r && a.t === b.t) pairs.push([a, b]);
+    });
+  });
+  return pairs;
+}
+
+function resolveRef(ref, results) {
+  if (ref.p !== undefined) return ref.p;
+  const res = results[`${ref.r}-${ref.t}`];
+  if (!res) return null;
+  const id = ref.rank === 1 ? res.first : res.second;
+  return id === undefined ? null : id;
+}
+
+/** 結果を直したとき、卓にいなくなった人の結果を後ろの回から消す。消した数を返す。 */
+function pruneResults(rounds, results) {
+  let removed = 0;
+  rounds.forEach((round, r) => {
+    round.tables.forEach((table, t) => {
+      const key = `${r}-${t}`;
+      const res = results[key];
+      if (!res) return;
+      const members = table.slots.map(s => resolveRef(s, results));
+      ['first', 'second'].forEach(field => {
+        if (res[field] !== undefined && !members.includes(res[field])) {
+          delete res[field];
+          removed++;
+        }
+      });
+      if (res.first === undefined && res.second === undefined) delete results[key];
+    });
+  });
+  return removed;
+}
+
+/** その時点までに同卓した相手を調べ、卓内の再戦ペアを返す */
+function rematchesInTable(rounds, results, r, t) {
+  const members = rounds[r].tables[t].slots.map(s => resolveRef(s, results));
+  const met = new Set();
+  for (let pr = 0; pr < r; pr++) {
+    rounds[pr].tables.forEach(table => {
+      const ids = table.slots.map(s => resolveRef(s, results)).filter(id => id !== null);
+      ids.forEach(a => ids.forEach(b => { if (a < b) met.add(`${a}-${b}`); }));
+    });
+  }
+  const pairs = [];
+  members.forEach((a, i) => {
+    members.slice(i + 1).forEach(b => {
+      if (a === null || b === null) return;
+      if (met.has(`${Math.min(a, b)}-${Math.max(a, b)}`)) pairs.push([a, b]);
+    });
+  });
+  return pairs;
+}
+
+/* ---------- 配色 ---------- */
+function hexToRgb(hex) {
+  const n = parseInt(hex.slice(1), 16);
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+}
+function rgbToHex(rgb) {
+  return '#' + rgb.map(v => Math.round(v).toString(16).padStart(2, '0')).join('');
+}
+/** aにbをtの割合で混ぜる */
+function mixColor(a, b, t) {
+  const x = hexToRgb(a), y = hexToRgb(b);
+  return rgbToHex(x.map((v, i) => v + (y[i] - v) * t));
+}
+function luminance(hex) {
+  const c = hexToRgb(hex).map(v => {
+    const s = v / 255;
+    return s <= 0.03928 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4);
+  });
+  return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+}
+function contrastRatio(a, b) {
+  const x = luminance(a), y = luminance(b);
+  return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05);
+}
+/** 全ての背景に対して読める濃さになるまで色を暗くする */
+function darkenUntilReadable(color, backgrounds, target) {
+  for (let k = 0; k <= 1; k += 0.05) {
+    const c = mixColor(color, '#000000', k);
+    if (backgrounds.every(bg => contrastRatio(c, bg) >= target)) return c;
+  }
+  return '#000000';
+}
+
+/** 画像のRGBAデータから主な色を最大5色返す。白・黒の余白より色みのある色を優先する。 */
+function extractColors(data) {
+  const buckets = new Map();
+  for (let i = 0; i + 3 < data.length; i += 4) {
+    if (data[i + 3] < 128) continue;
+    const key = (data[i] >> 4) << 8 | (data[i + 1] >> 4) << 4 | (data[i + 2] >> 4);
+    const b = buckets.get(key) || { n: 0, r: 0, g: 0, b: 0 };
+    b.n++; b.r += data[i]; b.g += data[i + 1]; b.b += data[i + 2];
+    buckets.set(key, b);
+  }
+  const candidates = [...buckets.values()].map(b => {
+    const rgb = [b.r / b.n, b.g / b.n, b.b / b.n];
+    const max = Math.max(...rgb), min = Math.min(...rgb);
+    const saturation = max === 0 ? 0 : (max - min) / max;
+    const plain = min > 235 || max < 25;
+    return { rgb, weight: b.n * (plain ? 0.05 : 0.4 + saturation) };
+  }).sort((a, b) => b.weight - a.weight);
+  const picked = [];
+  candidates.forEach(c => {
+    if (picked.length >= 5) return;
+    const far = picked.every(p => Math.hypot(p[0] - c.rgb[0], p[1] - c.rgb[1], p[2] - c.rgb[2]) > 70);
+    if (far) picked.push(c.rgb);
+  });
+  return picked.map(rgbToHex);
+}
+
+/** 抽出した色から配色案を3つ作る */
+function buildPalettes(colors) {
+  if (!colors.length) return [];
+  const a = colors[0];
+  const b = colors[1] || a;
+  return [
+    { name: '淡い背景', main: a, accent: b, deep: false },
+    { name: '淡い背景(色違い)', main: b, accent: a, deep: false },
+    { name: '濃い背景', main: a, accent: b, deep: true },
+  ];
+}
+
+const DEFAULT_THEME = {
+  felt: '#1f5c4a', feltSoft: '#e2eee8', accent: '#b5361f', accentSoft: '#f8e6e0',
+  bgFrom: '#f4f0e6', bgTo: '#f4f0e6', onBg: '#24231f', onBgMuted: '#6d6a60',
+  roundLine: '#1f5c4a', motif: '#1f5c4a', motifAlpha: 0.1,
+};
+
+/** デザイン設定から画面と画像で共通に使う色を作る */
+function themeFrom(design) {
+  if (!design.main) return DEFAULT_THEME;
+  const feltSoft = mixColor(design.main, '#ffffff', 0.86);
+  const felt = darkenUntilReadable(design.main, ['#ffffff', feltSoft], 4.5);
+  const accent = darkenUntilReadable(design.accent || design.main, ['#ffffff', '#fffdf8'], 4.5);
+  const accentSoft = mixColor(accent, '#ffffff', 0.88);
+  if (design.deep) {
+    const bgFrom = darkenUntilReadable(felt, ['#dddddd'], 4.5);
+    return {
+      felt, feltSoft, accent, accentSoft,
+      bgFrom, bgTo: mixColor(bgFrom, '#000000', 0.35),
+      onBg: '#ffffff', onBgMuted: '#dddddd', roundLine: '#ffffff', motif: '#ffffff', motifAlpha: 0.09,
+    };
+  }
+  return {
+    felt, feltSoft, accent, accentSoft,
+    bgFrom: mixColor(design.main, '#ffffff', 0.8), bgTo: mixColor(design.accent || design.main, '#ffffff', 0.8),
+    onBg: '#24231f', onBgMuted: '#4a4840', roundLine: felt, motif: felt, motifAlpha: 0.1,
+  };
+}
+/*LOGIC-END*/
+
+/* ---------- 画面 ---------- */
+const STORAGE_KEY = 'mahjong-tournament';
+const SCHEMA_VERSION = 1;
+const app = document.getElementById('app');
+const info = document.getElementById('info');
+const headerActions = document.getElementById('header-actions');
+const designSlot = document.getElementById('design-slot');
+const PATTERNS = [['gradient', 'グラデーション'], ['stripe', '斜めストライプ'], ['dots', 'ドット'], ['asanoha', '麻の葉']];
+function defaultDesign() {
+  return { title: '', logo: null, main: null, accent: null, deep: false, pattern: 'gradient', palettes: [] };
+}
+let state = { draft: '', players: null, rounds: null, results: {}, design: defaultDesign() };
+let notice = '';
+let confirmingReset = false;
+let designOpen = false;
+let exportTarget = 'all';
+
+function save() {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ version: SCHEMA_VERSION, ...state }));
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+function load() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(STORAGE_KEY));
+    if (saved && saved.version === SCHEMA_VERSION) {
+      state = {
+        draft: saved.draft || '', players: saved.players || null, rounds: saved.rounds || null, results: saved.results || {},
+        design: { ...defaultDesign(), ...(saved.design || {}) },
+      };
+    }
+  } catch (e) {}
+}
+function esc(s) {
+  return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+function roundName(r) {
+  return r === state.rounds.length - 1 ? '決勝' : `${r + 1}回戦`;
+}
+function refLabel(ref, currentRound) {
+  if (ref.p !== undefined) return '';
+  const place = `${tableLabel(ref.t)}卓${ref.rank}位`;
+  return ref.r === currentRound - 1 ? place : `${ref.r + 1}回戦${place}`;
+}
+
+function renderSetup() {
+  info.textContent = '';
+  headerActions.innerHTML = '';
+  app.innerHTML = `
+    <section class="setup">
+      <h2>参加者の名前を貼り付け</h2>
+      <p>Excelやメモからそのままコピペできます。1行に1人(タブ・カンマ区切りも可)。</p>
+      <textarea id="names" aria-label="参加者の名前" placeholder="田中&#10;佐藤&#10;鈴木&#10;高橋">${esc(state.draft)}</textarea>
+      <div class="setup-foot">
+        <button class="primary" id="draw">抽選する</button>
+        <span class="count" id="count"></span>
+        <span class="preview" id="preview"></span>
+      </div>
+      <div id="dups"></div>
+    </section>`;
+  // 日本語変換を途切れさせないよう、入力欄は作り直さず周りの表示だけ更新する
+  const updateSummary = () => {
+    const names = parseNames(state.draft);
+    const dups = findDuplicates(names);
+    let preview = '';
+    if (names.length >= 4) {
+      const s = roundShape(names.length);
+      const parts = [`1回戦 ${s.sizes.length}卓`];
+      if (s.byes) parts.push(`シード${s.byes}人`);
+      if (s.sizes.includes(3)) parts.push('うち1卓は3人打ち');
+      preview = parts.join('・');
+    } else if (names.length) {
+      preview = '4人以上で抽選できます';
+    }
+    document.getElementById('draw').disabled = names.length < 4;
+    document.getElementById('count').textContent = `${names.length}人`;
+    document.getElementById('preview').textContent = preview;
+    document.getElementById('dups').innerHTML = dups.length
+      ? `<div class="notice">同じ名前があります: ${esc(dups.join('、'))}。別人なら区別できる名前に直すのがおすすめです(このままでも抽選できます)。</div>`
+      : '';
+  };
+  updateSummary();
+  const area = document.getElementById('names');
+  area.addEventListener('input', () => {
+    state.draft = area.value;
+    save();
+    updateSummary();
+  });
+  document.getElementById('draw').addEventListener('click', () => {
+    const list = parseNames(state.draft);
+    state.players = list;
+    state.rounds = buildBracket(list.length);
+    state.results = {};
+    notice = '';
+    save();
+    render();
+  });
+}
+
+function seatHtml(ref, r, t, res, ready) {
+  const id = resolveRef(ref, state.results);
+  const origin = refLabel(ref, r);
+  if (id === null) {
+    return `<div class="seat"><span class="seat-name pending">${esc(origin)}</span></div>`;
+  }
+  const isFirst = res && res.first === id;
+  const isSecond = res && res.second === id;
+  const label = esc(state.players[id]);
+  const buttons = ready ? `
+    <button class="rank-btn" data-r="${r}" data-t="${t}" data-id="${id}" data-rank="1" aria-pressed="${!!isFirst}" aria-label="${label}を1位にする">1位</button>
+    <button class="rank-btn" data-r="${r}" data-t="${t}" data-id="${id}" data-rank="2" aria-pressed="${!!isSecond}" aria-label="${label}を2位にする">2位</button>` : '';
+  return `<div class="seat" data-player="${id}">
+    <span class="seat-name">${label}${origin ? `<span class="seat-origin">${esc(origin)}</span>` : ''}</span>${buttons}
+  </div>`;
+}
+
+function tableHtml(table, r, t) {
+  const key = `${r}-${t}`;
+  const res = state.results[key];
+  const members = table.slots.map(s => resolveRef(s, state.results));
+  const ready = members.every(m => m !== null);
+  const isFinal = r === state.rounds.length - 1;
+  const done = res && res.first !== undefined && (isFinal || res.second !== undefined);
+  const sizeNote = table.slots.length === 3 ? '<small>3人打ち</small>' : (ready && !done ? '<small>順位を入力</small>' : '');
+  const warn = tableWarning(table, r, t);
+  return `<article class="table ${done ? 'done' : ''}">
+    <div class="table-head"><span>${isFinal ? '決勝卓' : `${tableLabel(t)}卓`}</span>${sizeNote}</div>
+    ${table.slots.map(s => seatHtml(s, r, t, res, ready)).join('')}
+    ${warn ? `<div class="rematch">${esc(warn)}</div>` : ''}
+  </article>`;
+}
+
+/** 卓の再戦表示の文言(画面と画像で共通) */
+function tableWarning(table, r, t) {
+  const ready = table.slots.every(s => resolveRef(s, state.results) !== null);
+  if (ready) {
+    const pairs = rematchesInTable(state.rounds, state.results, r, t);
+    return pairs.length ? `再戦: ${pairs.map(([a, b]) => `${state.players[a]}×${state.players[b]}`).join('、')}` : '';
+  }
+  const same = sameSourcePairs(table);
+  return same.length ? `${same.map(([a]) => `${tableLabel(a.t)}卓`).join('・')}の1位・2位が同卓(組み方の都合で再戦)` : '';
+}
+
+function byesHtml(round, r) {
+  if (!round.byes.length) return '';
+  const items = round.byes.map(ref => {
+    const id = resolveRef(ref, state.results);
+    const name = id === null ? refLabel(ref, r) : state.players[id];
+    return `<li ${id === null ? '' : `data-player="${id}"`}>${esc(name)}</li>`;
+  }).join('');
+  return `<div class="byes"><strong>シード(この回は免除)</strong><ul>${items}</ul></div>`;
+}
+
+function renderBracket() {
+  const n = state.players.length;
+  info.textContent = `${n}人・全${state.rounds.length}回戦`;
+  headerActions.innerHTML = `<button id="reset" class="${confirmingReset ? 'confirming' : ''}">${confirmingReset ? '結果が消えます。やり直す' : '抽選し直す'}</button>`;
+  document.getElementById('reset').addEventListener('click', () => {
+    if (!confirmingReset) {
+      confirmingReset = true;
+      render();
+      setTimeout(() => { if (confirmingReset) { confirmingReset = false; render(); } }, 4000);
+      return;
+    }
+    confirmingReset = false;
+    state.draft = state.players.join('\n');
+    state.players = null;
+    state.rounds = null;
+    state.results = {};
+    notice = '';
+    save();
+    render();
+  });
+  const finalRes = state.results[`${state.rounds.length - 1}-0`];
+  const champion = finalRes && finalRes.first !== undefined ? finalRes.first : null;
+  app.innerHTML = `
+    ${champion !== null ? `<div class="banner">優勝: ${esc(state.players[champion])}${finalRes.second !== undefined ? ` / 準優勝: ${esc(state.players[finalRes.second])}` : ''}</div>` : ''}
+    ${notice ? `<div class="notice" style="margin:0 0 12px">${esc(notice)}</div>` : ''}
+    <div class="bracket">
+      ${state.rounds.map((round, r) => `
+        <section class="round">
+          <div class="round-head"><h2>${roundName(r)}</h2><span>${round.tables.length}卓${round.byes.length ? `・シード${round.byes.length}` : ''}</span></div>
+          ${byesHtml(round, r)}
+          ${round.tables.map((t, i) => tableHtml(t, r, i)).join('')}
+        </section>`).join('')}
+    </div>
+    <p class="help">各卓の1位・2位を押すと次の卓に名前が入ります。もう一度押すと取り消せます。名前にカーソルを合わせると同じ人が光ります。</p>`;
+}
+
+function render() {
+  if (state.rounds) {
+    if (!designSlot.firstChild) renderDesignSlot();
+    renderBracket();
+  } else {
+    designSlot.innerHTML = '';
+    renderSetup();
+  }
+}
+
+/* ---------- デザイン ---------- */
+const TILE_SCALE = 2;
+
+/** 背景の模様1枚分を描く。グラデーションのときはnull。 */
+function makeTile(pattern, theme) {
+  if (pattern === 'gradient') return null;
+  const s = TILE_SCALE;
+  const canvas = document.createElement('canvas');
+  const ctx = canvas.getContext('2d');
+  let cssW, cssH;
+  if (pattern === 'stripe') {
+    cssW = cssH = 24;
+    canvas.width = canvas.height = cssW * s;
+    ctx.scale(s, s);
+    ctx.lineWidth = 6;
+    ctx.beginPath();
+    [-24, 0, 24].forEach(o => { ctx.moveTo(o, 24); ctx.lineTo(o + 24, 0); });
+    setMotif(ctx, theme);
+    ctx.stroke();
+  } else if (pattern === 'dots') {
+    cssW = cssH = 22;
+    canvas.width = canvas.height = cssW * s;
+    ctx.scale(s, s);
+    setMotif(ctx, theme);
+    ctx.beginPath();
+    ctx.arc(11, 11, 2.6, 0, Math.PI * 2);
+    ctx.fill();
+  } else {
+    // 麻の葉: 正三角形の格子に、重心から各頂点への線を足す
+    const a = 40, h = a * Math.sqrt(3) / 2;
+    cssW = a; cssH = 2 * h;
+    canvas.width = a * s;
+    canvas.height = Math.round(2 * h * s);
+    ctx.scale(canvas.width / a, canvas.height / (2 * h));
+    setMotif(ctx, theme);
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    const tri = (p, q, u) => {
+      const c = [(p[0] + q[0] + u[0]) / 3, (p[1] + q[1] + u[1]) / 3];
+      [[p, q], [q, u], [u, p], [c, p], [c, q], [c, u]].forEach(([m, n]) => { ctx.moveTo(m[0], m[1]); ctx.lineTo(n[0], n[1]); });
+    };
+    for (let row = -1; row <= 2; row++) {
+      const offset = Math.abs(row % 2) ? a / 2 : 0;
+      for (let col = -2; col <= 2; col++) {
+        const x = col * a + offset, y = row * h;
+        tri([x, y + h], [x + a, y + h], [x + a / 2, y]);
+        tri([x + a / 2, y], [x + a * 1.5, y], [x + a, y + h]);
+      }
+    }
+    ctx.stroke();
+  }
+  return { canvas, cssW, cssH };
+}
+function setMotif(ctx, theme) {
+  const [r, g, b] = hexToRgb(theme.motif);
+  const color = `rgba(${r},${g},${b},${theme.motifAlpha})`;
+  ctx.strokeStyle = color;
+  ctx.fillStyle = color;
+}
+
+function applyTheme() {
+  const theme = themeFrom(state.design);
+  const root = document.documentElement.style;
+  root.setProperty('--felt', theme.felt);
+  root.setProperty('--felt-soft', theme.feltSoft);
+  root.setProperty('--accent', theme.accent);
+  root.setProperty('--accent-soft', theme.accentSoft);
+  root.setProperty('--on-bg', theme.onBg);
+  root.setProperty('--on-bg-muted', theme.onBgMuted);
+  root.setProperty('--round-line', theme.roundLine);
+  const tile = makeTile(state.design.pattern, theme);
+  const gradient = `linear-gradient(135deg, ${theme.bgFrom}, ${theme.bgTo})`;
+  document.body.style.backgroundImage = tile ? `url(${tile.canvas.toDataURL()}), ${gradient}` : gradient;
+  document.body.style.backgroundSize = tile ? `${tile.cssW}px ${tile.cssH}px, auto` : 'auto';
+}
+
+function eventHeadHtml() {
+  const { title, logo } = state.design;
+  if (!title && !logo) return '';
+  return `<div class="event-head">${logo ? `<img src="${esc(logo)}" alt="ロゴ">` : ''}<strong>${esc(title)}</strong></div>`;
+}
+function renderEventHead() {
+  const el = document.getElementById('event-head');
+  if (el) el.innerHTML = eventHeadHtml();
+}
+
+function renderDesignSlot() {
+  const d = state.design;
+  const samePalette = p => p.main === d.main && p.accent === d.accent && !!p.deep === !!d.deep;
+  const targets = [['all', '全体(全回戦を1枚に)']].concat(state.rounds.map((_, r) => [String(r), `${roundName(r)}だけ`]));
+  if (!targets.some(([v]) => v === exportTarget)) exportTarget = 'all';
+  designSlot.innerHTML = `
+    <div class="toolbar">
+      <select id="export-target" aria-label="画像にする範囲">
+        ${targets.map(([v, label]) => `<option value="${v}" ${v === exportTarget ? 'selected' : ''}>${esc(label)}</option>`).join('')}
+      </select>
+      <button class="save" id="export-image">画像を保存</button>
+      <span class="export-status" id="export-status" role="status"></span>
+    </div>
+    <details class="design-panel" id="design-panel" ${designOpen ? 'open' : ''}>
+      <summary>デザイン</summary>
+      <div class="design-body">
+        <div class="field">
+          <label class="field-label" for="event-title">大会名</label>
+          <input type="text" id="event-title" placeholder="例: 第5回 〇〇杯" value="${esc(d.title)}">
+        </div>
+        <div class="field">
+          <span class="field-label">ロゴ</span>
+          <div class="row">
+            <label class="file-button">画像を選ぶ<input type="file" id="logo-file" accept="image/*"></label>
+            ${d.logo ? `<img class="logo-thumb" src="${esc(d.logo)}" alt="ロゴ"><button class="chip" id="logo-clear">外す</button>` : ''}
+          </div>
+        </div>
+        <div class="field">
+          <span class="field-label">配色</span>
+          <div class="row">
+            ${d.palettes.map((p, i) => `<button class="chip" data-palette="${i}" aria-pressed="${samePalette(p)}"><span class="swatch"><i style="background:${esc(p.main)}"></i><i style="background:${esc(p.accent)}"></i></span>${esc(p.name)}</button>`).join('')}
+            <button class="chip" id="theme-default" aria-pressed="${!d.main}">標準</button>
+          </div>
+          <div class="row" style="margin-top:6px">
+            <label class="color-input">メイン<input type="color" id="color-main" value="${esc(d.main || DEFAULT_THEME.felt)}"></label>
+            <label class="color-input">アクセント<input type="color" id="color-accent" value="${esc(d.accent || DEFAULT_THEME.accent)}"></label>
+          </div>
+        </div>
+        <div class="field">
+          <span class="field-label">背景の模様</span>
+          <div class="row">
+            ${PATTERNS.map(([v, label]) => `<button class="chip" data-pattern="${v}" aria-pressed="${d.pattern === v}">${label}</button>`).join('')}
+          </div>
+        </div>
+      </div>
+    </details>
+    <div id="event-head">${eventHeadHtml()}</div>`;
+}
+
+function setExportStatus(text) {
+  const el = document.getElementById('export-status');
+  if (el) el.textContent = text;
+}
+
+function designChanged() {
+  applyTheme();
+  renderEventHead();
+  if (!save()) setExportStatus('保存できませんでした。ロゴを小さい画像にしてください。');
+}
+
+/** ロゴを読み込み、保存用に縮小して、色を抽出する */
+function loadLogo(file) {
+  const url = URL.createObjectURL(file);
+  const img = new Image();
+  img.onerror = () => {
+    URL.revokeObjectURL(url);
+    setExportStatus('この画像は読み込めませんでした。');
+  };
+  img.onload = () => {
+    const w = img.naturalWidth || 320, h = img.naturalHeight || 320;
+    const ratio = Math.min(1, 320 / Math.max(w, h));
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.round(w * ratio));
+    canvas.height = Math.max(1, Math.round(h * ratio));
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+    URL.revokeObjectURL(url);
+    const colors = extractColors(ctx.getImageData(0, 0, canvas.width, canvas.height).data);
+    const d = state.design;
+    d.logo = canvas.toDataURL('image/png');
+    d.palettes = buildPalettes(colors);
+    if (d.palettes.length) Object.assign(d, { main: d.palettes[0].main, accent: d.palettes[0].accent, deep: false });
+    designChanged();
+    renderDesignSlot();
+    setExportStatus(d.palettes.length ? '' : 'ロゴから色を拾えなかったので、配色はそのままです。');
+  };
+  img.src = url;
+}
+
+designSlot.addEventListener('toggle', e => {
+  if (e.target.id === 'design-panel') designOpen = e.target.open;
+}, true);
+
+designSlot.addEventListener('input', e => {
+  const d = state.design;
+  if (e.target.id === 'event-title') {
+    d.title = e.target.value;
+    designChanged();
+  } else if (e.target.id === 'color-main' || e.target.id === 'color-accent') {
+    d.main = document.getElementById('color-main').value;
+    d.accent = document.getElementById('color-accent').value;
+    designChanged();
+  }
+});
+
+designSlot.addEventListener('change', e => {
+  if (e.target.id === 'export-target') {
+    exportTarget = e.target.value;
+  } else if (e.target.id === 'logo-file' && e.target.files[0]) {
+    loadLogo(e.target.files[0]);
+    e.target.value = '';
+  } else if (e.target.id === 'color-main' || e.target.id === 'color-accent') {
+    renderDesignSlot();
+  }
+});
+
+designSlot.addEventListener('click', e => {
+  const d = state.design;
+  const paletteBtn = e.target.closest('[data-palette]');
+  const patternBtn = e.target.closest('[data-pattern]');
+  if (paletteBtn) {
+    const p = d.palettes[Number(paletteBtn.dataset.palette)];
+    Object.assign(d, { main: p.main, accent: p.accent, deep: p.deep });
+  } else if (patternBtn) {
+    d.pattern = patternBtn.dataset.pattern;
+  } else if (e.target.id === 'theme-default') {
+    Object.assign(d, { main: null, accent: null, deep: false });
+  } else if (e.target.id === 'logo-clear') {
+    Object.assign(d, { logo: null, palettes: [] });
+  } else if (e.target.id === 'export-image') {
+    exportImage(exportTarget);
+    return;
+  } else {
+    return;
+  }
+  designChanged();
+  renderDesignSlot();
+});
+
+/* ---------- 画像保存 ---------- */
+const FONT_SANS = '"Hiragino Kaku Gothic ProN", "Yu Gothic UI", "Yu Gothic", Meiryo, sans-serif';
+const FONT_SERIF = '"Hiragino Mincho ProN", "Yu Mincho", serif';
+const IMG = { w: 1920, h: 1080, margin: 24, cardH: 88, cardGap: 16, gap: 16, blockGap: 12, colW: 256, head: 44, tableHead: 28, seat: 40, warnLine: 17, maxScale: 2 };
+
+/** 高さlimitに収まるようにブロックを列へ詰める */
+function packColumns(blocks, limit) {
+  const columns = [];
+  let current = [], used = 0;
+  blocks.forEach(block => {
+    const add = block.height + IMG.blockGap;
+    if (current.length && used + add > limit) {
+      columns.push(current);
+      current = [];
+      used = 0;
+    }
+    current.push(block);
+    used += add;
+  });
+  if (current.length) columns.push(current);
+  return columns;
+}
+
+/** 1920×1080に一番大きく収まる列の組み方を探す。sectionsは回戦ごとのブロック一覧。 */
+function fitLayout(sections, availW, availH) {
+  const allBlocks = sections.flatMap(s => s.blocks);
+  const tallest = Math.max(...allBlocks.map(b => b.height + IMG.blockGap));
+  const total = allBlocks.reduce((sum, b) => sum + b.height + IMG.blockGap, 0);
+  let best = null;
+  for (let limit = tallest; limit <= total + 1; limit += 20) {
+    const columns = [];
+    sections.forEach(section => {
+      packColumns(section.blocks, limit).forEach((blocks, i) => columns.push({ r: section.r, label: i === 0, blocks }));
+    });
+    const contentW = columns.length * IMG.colW + (columns.length - 1) * IMG.gap;
+    const contentH = Math.max(...columns.map(c => c.blocks.reduce((sum, b) => sum + b.height + IMG.blockGap, 0))) - IMG.blockGap + IMG.head;
+    const scale = Math.min(IMG.maxScale, availW / contentW, availH / contentH);
+    if (!best || scale > best.scale) best = { columns, contentW, contentH, scale };
+  }
+  return best;
+}
+
+function roundedRect(ctx, x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+
+/** 1文字ずつ測って折り返す(日本語は単語の区切りがないため) */
+function wrapText(ctx, text, maxW) {
+  const lines = [];
+  let line = '';
+  for (const ch of text) {
+    if (line && ctx.measureText(line + ch).width > maxW) {
+      lines.push(line);
+      line = ch;
+    } else {
+      line += ch;
+    }
+  }
+  if (line) lines.push(line);
+  return lines;
+}
+
+/** 幅に収まるよう文字を縮め、それでも長ければ末尾を省略して描く */
+function drawFitted(ctx, text, x, y, maxW, size, minSize, font) {
+  let s = size;
+  ctx.font = font(s);
+  while (s > minSize && ctx.measureText(text).width > maxW) {
+    s -= 1;
+    ctx.font = font(s);
+  }
+  let out = text;
+  if (ctx.measureText(out).width > maxW) {
+    while (out && ctx.measureText(out + '…').width > maxW) out = out.slice(0, -1);
+    out += '…';
+  }
+  ctx.fillText(out, x, y);
+}
+
+function tableBlock(ctx, table, r, t) {
+  ctx.font = `12px ${FONT_SANS}`;
+  const warn = tableWarning(table, r, t);
+  const warnLines = warn ? wrapText(ctx, warn, IMG.colW - 20) : [];
+  const height = IMG.tableHead + table.slots.length * IMG.seat + (warnLines.length ? warnLines.length * IMG.warnLine + 8 : 0);
+  return { kind: 'table', table, r, t, warnLines, height };
+}
+function byeBlock(ctx, round, r) {
+  const names = round.byes.map(ref => {
+    const id = resolveRef(ref, state.results);
+    return id === null ? refLabel(ref, r) : state.players[id];
+  });
+  return { kind: 'byes', names, height: 30 + names.length * 20 };
+}
+
+function drawTable(ctx, block, x, y, theme) {
+  const { table, r, t, warnLines, height } = block;
+  const w = IMG.colW;
+  const key = `${r}-${t}`;
+  const res = state.results[key];
+  const isFinal = r === state.rounds.length - 1;
+  const done = res && res.first !== undefined && (isFinal || res.second !== undefined);
+
+  ctx.save();
+  roundedRect(ctx, x, y, w, height, 8);
+  ctx.fillStyle = '#fffdf8';
+  ctx.fill();
+  ctx.clip();
+  ctx.fillStyle = theme.feltSoft;
+  ctx.fillRect(x, y, w, IMG.tableHead);
+  ctx.textBaseline = 'middle';
+  ctx.fillStyle = theme.felt;
+  ctx.font = `bold 13px ${FONT_SANS}`;
+  ctx.fillText(isFinal ? '決勝卓' : `${tableLabel(t)}卓`, x + 10, y + IMG.tableHead / 2);
+  if (table.slots.length === 3) {
+    ctx.font = `12px ${FONT_SANS}`;
+    ctx.fillStyle = '#6d6a60';
+    ctx.textAlign = 'right';
+    ctx.fillText('3人打ち', x + w - 10, y + IMG.tableHead / 2);
+    ctx.textAlign = 'left';
+  }
+
+  let sy = y + IMG.tableHead;
+  table.slots.forEach(ref => {
+    ctx.fillStyle = '#d9d3c3';
+    ctx.fillRect(x, sy, w, 1);
+    const id = resolveRef(ref, state.results);
+    const origin = refLabel(ref, r);
+    if (id === null) {
+      ctx.fillStyle = '#6d6a60';
+      ctx.font = `13px ${FONT_SANS}`;
+      ctx.fillText(origin, x + 10, sy + IMG.seat / 2);
+    } else {
+      const rank = res && res.first === id ? 1 : res && res.second === id ? 2 : 0;
+      const nameW = w - 20 - (rank ? 44 : 0);
+      ctx.fillStyle = '#24231f';
+      drawFitted(ctx, state.players[id], x + 10, sy + (origin ? 14 : IMG.seat / 2), nameW, 14, 10, s => `${s}px ${FONT_SANS}`);
+      if (origin) {
+        ctx.fillStyle = '#6d6a60';
+        ctx.font = `11px ${FONT_SANS}`;
+        ctx.fillText(origin, x + 10, sy + 30);
+      }
+      if (rank) {
+        roundedRect(ctx, x + w - 46, sy + 9, 36, 22, 5);
+        ctx.fillStyle = theme.felt;
+        ctx.fill();
+        ctx.fillStyle = '#ffffff';
+        ctx.font = `bold 12px ${FONT_SANS}`;
+        ctx.textAlign = 'center';
+        ctx.fillText(`${rank}位`, x + w - 28, sy + 20);
+        ctx.textAlign = 'left';
+      }
+    }
+    sy += IMG.seat;
+  });
+
+  if (warnLines.length) {
+    ctx.fillStyle = '#fbf0d4';
+    ctx.fillRect(x, sy, w, height - (sy - y));
+    ctx.fillStyle = '#8a5a00';
+    ctx.font = `12px ${FONT_SANS}`;
+    warnLines.forEach((line, i) => ctx.fillText(line, x + 10, sy + 4 + IMG.warnLine * (i + 0.5)));
+  }
+  ctx.restore();
+
+  roundedRect(ctx, x + 0.5, y + 0.5, w - 1, height - 1, 8);
+  ctx.strokeStyle = done ? theme.felt : '#d9d3c3';
+  ctx.lineWidth = 1;
+  ctx.stroke();
+}
+
+function drawByes(ctx, block, x, y, theme) {
+  roundedRect(ctx, x, y, IMG.colW, block.height, 8);
+  ctx.fillStyle = '#fffdf8';
+  ctx.fill();
+  ctx.setLineDash([4, 3]);
+  ctx.strokeStyle = '#d9d3c3';
+  ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.textBaseline = 'middle';
+  ctx.fillStyle = theme.accent;
+  ctx.font = `bold 12px ${FONT_SANS}`;
+  ctx.fillText('シード(この回は免除)', x + 10, y + 16);
+  ctx.fillStyle = '#24231f';
+  block.names.forEach((name, i) => {
+    drawFitted(ctx, name, x + 10, y + 36 + i * 20, IMG.colW - 20, 13, 10, s => `${s}px ${FONT_SANS}`);
+  });
+}
+
+async function exportImage(target) {
+  setExportStatus('画像を作っています…');
+  try {
+    const blob = await renderImage(target);
+    const title = (state.design.title || '麻雀トーナメント表').replace(/[\\/:*?"<>|]/g, '_');
+    const suffix = target === 'all' ? '全体' : roundName(Number(target));
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = `${title}_${suffix}.png`;
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(link.href), 10000);
+    setExportStatus(`${link.download} を保存しました`);
+  } catch (e) {
+    setExportStatus('画像を作れませんでした。回戦ごとの保存を試してください。');
+  }
+}
+
+async function renderImage(target) {
+  const theme = themeFrom(state.design);
+  const d = state.design;
+  const finalRes = state.results[`${state.rounds.length - 1}-0`];
+  const measure = document.createElement('canvas').getContext('2d');
+  const isAll = target === 'all';
+  const shown = isAll ? state.rounds.map((_, r) => r) : [Number(target)];
+
+  // 回戦ごとに載せるものを用意し、1920×1080に一番大きく入る並べ方を探す
+  const sections = shown.map(r => {
+    const round = state.rounds[r];
+    const blocks = round.tables.map((table, t) => tableBlock(measure, table, r, t));
+    if (round.byes.length) blocks.unshift(byeBlock(measure, round, r));
+    return { r, blocks };
+  });
+  const bodyY = IMG.margin + IMG.cardH + IMG.cardGap;
+  const availW = IMG.w - IMG.margin * 2;
+  const availH = IMG.h - bodyY - IMG.margin;
+  const layout = fitLayout(sections, availW, availH);
+
+  const canvas = document.createElement('canvas');
+  canvas.width = IMG.w;
+  canvas.height = IMG.h;
+  const ctx = canvas.getContext('2d');
+
+  const gradient = ctx.createLinearGradient(0, 0, IMG.w, IMG.h);
+  gradient.addColorStop(0, theme.bgFrom);
+  gradient.addColorStop(1, theme.bgTo);
+  ctx.fillStyle = gradient;
+  ctx.fillRect(0, 0, IMG.w, IMG.h);
+  const tile = makeTile(d.pattern, theme);
+  if (tile) {
+    const pattern = ctx.createPattern(tile.canvas, 'repeat');
+    pattern.setTransform(new DOMMatrix().scale(1 / TILE_SCALE));
+    ctx.fillStyle = pattern;
+    ctx.fillRect(0, 0, IMG.w, IMG.h);
+  }
+  ctx.textBaseline = 'middle';
+
+  // 見出しカード(ロゴ・大会名・優勝者を横一列に)
+  const cardW = availW;
+  const cardCenter = IMG.margin + IMG.cardH / 2;
+  roundedRect(ctx, IMG.margin, IMG.margin, cardW, IMG.cardH, 8);
+  ctx.fillStyle = '#fffdf8';
+  ctx.fill();
+  let textX = IMG.margin + 18;
+  if (d.logo) {
+    const logo = new Image();
+    logo.src = d.logo;
+    await logo.decode();
+    const ratio = Math.min(160 / logo.naturalWidth, 68 / logo.naturalHeight);
+    const lw = logo.naturalWidth * ratio, lh = logo.naturalHeight * ratio;
+    ctx.drawImage(logo, textX, cardCenter - lh / 2, lw, lh);
+    textX += lw + 16;
+  }
+  const champion = finalRes && finalRes.first !== undefined && (isAll || Number(target) === state.rounds.length - 1)
+    ? `優勝: ${state.players[finalRes.first]}${finalRes.second !== undefined ? ` / 準優勝: ${state.players[finalRes.second]}` : ''}`
+    : '';
+  const cardRight = IMG.margin + cardW - 18;
+  const championW = champion ? Math.min(760, cardW * 0.42) : 0;
+  const titleW = cardRight - textX - (champion ? championW + 24 : 0);
+  ctx.fillStyle = '#24231f';
+  drawFitted(ctx, d.title || '麻雀トーナメント表', textX, cardCenter - 12, titleW, 30, 14, s => `bold ${s}px ${FONT_SERIF}`);
+  ctx.fillStyle = '#6d6a60';
+  ctx.font = `14px ${FONT_SANS}`;
+  ctx.fillText(`${state.players.length}人・全${state.rounds.length}回戦${isAll ? '' : `・${roundName(Number(target))}`}`, textX, cardCenter + 20);
+  if (champion) {
+    const bx = cardRight - championW;
+    roundedRect(ctx, bx, IMG.margin + 20, championW, IMG.cardH - 40, 6);
+    ctx.fillStyle = theme.accentSoft;
+    ctx.fill();
+    ctx.fillStyle = '#24231f';
+    drawFitted(ctx, champion, bx + 14, cardCenter, championW - 28, 18, 11, s => `bold ${s}px ${FONT_SANS}`);
+  }
+
+  // 本体は空いた場所の中央に、計算した倍率で描く
+  ctx.save();
+  const scaledW = layout.contentW * layout.scale;
+  const scaledH = layout.contentH * layout.scale;
+  ctx.translate(IMG.margin + (availW - scaledW) / 2, bodyY + (availH - scaledH) / 2);
+  ctx.scale(layout.scale, layout.scale);
+  layout.columns.forEach((col, c) => {
+    const x = c * (IMG.colW + IMG.gap);
+    if (col.label) {
+      ctx.textBaseline = 'middle';
+      ctx.fillStyle = theme.onBg;
+      ctx.font = `bold 16px ${FONT_SERIF}`;
+      ctx.fillText(roundName(col.r), x, 12);
+      const round = state.rounds[col.r];
+      const nameW = ctx.measureText(roundName(col.r)).width;
+      ctx.fillStyle = theme.onBgMuted;
+      ctx.font = `12px ${FONT_SANS}`;
+      ctx.fillText(`${round.tables.length}卓${round.byes.length ? `・シード${round.byes.length}` : ''}`, x + nameW + 8, 13);
+    }
+    ctx.fillStyle = theme.roundLine;
+    ctx.fillRect(x, 28, IMG.colW, 2);
+    let y = IMG.head;
+    col.blocks.forEach(block => {
+      if (block.kind === 'table') drawTable(ctx, block, x, y, theme);
+      else drawByes(ctx, block, x, y, theme);
+      y += block.height + IMG.blockGap;
+    });
+  });
+  ctx.restore();
+
+  return new Promise((resolve, reject) => {
+    canvas.toBlob(blob => (blob ? resolve(blob) : reject(new Error('toBlob failed'))), 'image/png');
+  });
+}
+
+app.addEventListener('click', e => {
+  const btn = e.target.closest('.rank-btn');
+  if (!btn) return;
+  const key = `${btn.dataset.r}-${btn.dataset.t}`;
+  const id = Number(btn.dataset.id);
+  const field = btn.dataset.rank === '1' ? 'first' : 'second';
+  const other = field === 'first' ? 'second' : 'first';
+  const res = state.results[key] || (state.results[key] = {});
+  if (res[field] === id) {
+    delete res[field];
+  } else {
+    if (res[other] === id) delete res[other];
+    res[field] = id;
+  }
+  if (res.first === undefined && res.second === undefined) delete state.results[key];
+  const removed = pruneResults(state.rounds, state.results);
+  notice = removed ? `結果の修正に合わせて、後の回の順位を${removed}件取り消しました。もう一度入力してください。` : '';
+  confirmingReset = false;
+  save();
+  render();
+});
+
+function highlight(id, on) {
+  app.querySelectorAll(`[data-player="${id}"]`).forEach(el => el.classList.toggle('hl', on));
+}
+app.addEventListener('mouseover', e => {
+  const el = e.target.closest('[data-player]');
+  if (el) highlight(el.dataset.player, true);
+});
+app.addEventListener('mouseout', e => {
+  const el = e.target.closest('[data-player]');
+  if (el) highlight(el.dataset.player, false);
+});
+
+load();
+applyTheme();
+render();
+</script>
+</body>
+</html>
