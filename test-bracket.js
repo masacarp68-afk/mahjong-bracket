@@ -8,8 +8,8 @@ const html = fs.readFileSync(path.join(__dirname, 'index.html'), 'utf8');
 const code = html.split('/*LOGIC-START*/')[1].split('/*LOGIC-END*/')[0];
 const ctx = { crypto: require('crypto').webcrypto, Uint32Array, Math, Set, Array };
 vm.createContext(ctx);
-vm.runInContext(code + '\nthis.api={parseNames,findDuplicates,tableLabel,roundShape,buildBracket,bracketSides,planSides,normalizeSeeds,sameSourcePairs,resolveRef,pruneResults,rematchesInTable,extractColors,buildPalettes,themeFrom,contrastRatio};', ctx);
-const { parseNames, findDuplicates, tableLabel, roundShape, buildBracket, bracketSides, planSides, normalizeSeeds, sameSourcePairs, resolveRef, pruneResults, rematchesInTable, extractColors, buildPalettes, themeFrom, contrastRatio } = ctx.api;
+vm.runInContext(code + '\nthis.api={parseNames,findDuplicates,tableLabel,roundShape,buildBracket,bracketSides,planSides,normalizeSeeds,newShareId,applyStreamEvent,resultChanges,resultPatch,removedResultCount,cleanResults,parseSharedBracket,parseSharedDesign,sameSourcePairs,resolveRef,pruneResults,rematchesInTable,extractColors,buildPalettes,themeFrom,contrastRatio};', ctx);
+const { parseNames, findDuplicates, tableLabel, roundShape, buildBracket, bracketSides, planSides, normalizeSeeds, newShareId, applyStreamEvent, resultChanges, resultPatch, removedResultCount, cleanResults, parseSharedBracket, parseSharedDesign, sameSourcePairs, resolveRef, pruneResults, rematchesInTable, extractColors, buildPalettes, themeFrom, contrastRatio } = ctx.api;
 
 // 配色: 白地に赤と青のロゴから、白より赤・青を優先して拾う
 {
@@ -232,6 +232,80 @@ for (const n of [16, 40, 64]) {
       assert.deepStrictEqual(Array.from(placed), Array.from(round.tables.keys()), `n=${n} r=${r} 卓の過不足`);
     });
   }
+}
+
+// 共有: IDは推測できない長さで、毎回変わる
+{
+  const a = newShareId(), b = newShareId();
+  assert.ok(/^[A-Za-z0-9_-]{22}$/.test(a), a);
+  assert.notStrictEqual(a, b);
+}
+
+// 共有: Firebaseの受信イベントを手元のデータへ反映する
+{
+  const json = v => JSON.parse(JSON.stringify(v));
+  let tree = applyStreamEvent(null, '/', { bracket: 'x', results: { '0-0': { first: 1 } } }, false);
+  assert.deepStrictEqual(json(tree), { bracket: 'x', results: { '0-0': { first: 1 } } });
+  tree = applyStreamEvent(tree, '/results/0-1', { first: 2, second: 3 }, false);
+  assert.deepStrictEqual(json(tree.results['0-1']), { first: 2, second: 3 });
+  // patchは指定した子だけ置き換え、nullは削除
+  tree = applyStreamEvent(tree, '/results', { '0-0': { second: 9 }, '0-1': null }, true);
+  assert.deepStrictEqual(json(tree.results), { '0-0': { second: 9 } });
+  // 子が全部消えた親も消える(Firebaseと同じ)
+  tree = applyStreamEvent(tree, '/results/0-0/second', null, false);
+  assert.strictEqual(tree.results, undefined);
+  assert.strictEqual(applyStreamEvent(tree, '/', null, false), null);
+}
+
+// 共有: 変わった卓だけを送る
+{
+  const json = v => JSON.parse(JSON.stringify(v));
+  const before = { '0-0': { first: 1 }, '0-1': { first: 2, second: 3 }, '1-0': { first: 4 } };
+  const after = { '0-0': { first: 1 }, '0-1': { first: 2, second: 5 } };
+  assert.deepStrictEqual(json(resultChanges(before, after)), { '0-1': { first: 2, second: 5 }, '1-0': null });
+  assert.deepStrictEqual(json(resultChanges(after, after)), {});
+  // 送るのは変わった席だけ。同じ卓の別の席を2人が入力しても消し合わない。
+  assert.deepStrictEqual(json(resultPatch(before, after)), { '0-1/second': 5, '1-0/first': null });
+  assert.deepStrictEqual(json(resultPatch({}, { '0-0': { first: 1, second: 2 } })), { '0-0/first': 1, '0-0/second': 2 });
+  assert.deepStrictEqual(json(resultPatch(after, after)), {});
+  // 受信側は「卓/席」の形のキーも反映できる
+  let merged = applyStreamEvent({ results: { '0-1': { first: 2 } } }, '/results', { '0-1/second': 5 }, true);
+  assert.deepStrictEqual(json(merged.results), { '0-1': { first: 2, second: 5 } });
+  merged = applyStreamEvent(merged, '/results', { '0-1/first': null, '0-1/second': null }, true);
+  assert.strictEqual(merged, null);
+  // 別の人に変わっただけなら「消えた」に数えない
+  assert.strictEqual(removedResultCount(before, after), 1);
+  assert.strictEqual(removedResultCount(after, before), 0);
+}
+
+// 共有: 受信データは信用せず、壊れたものは使わない
+{
+  const rounds = buildBracket(8);
+  const players = Array.from({ length: 8 }, (_, i) => `p${i}`);
+  const good = JSON.stringify({ players, rounds });
+  assert.strictEqual(parseSharedBracket(good).players.length, 8);
+  assert.strictEqual(parseSharedBracket('{こわれた'), null);
+  assert.strictEqual(parseSharedBracket(JSON.stringify({ players: ['a'], rounds })), null);
+  const badRef = JSON.parse(good);
+  badRef.rounds[0].tables[0].slots[0] = { p: 99 };
+  assert.strictEqual(parseSharedBracket(JSON.stringify(badRef)), null);
+  const badTable = JSON.parse(good);
+  badTable.rounds[1].tables[0].slots[0] = { r: 0, t: 7, rank: 1 };
+  assert.strictEqual(parseSharedBracket(JSON.stringify(badTable)), null);
+
+  const clean = cleanResults({ '0-0': { first: 1, second: 'x' }, '9-9': { first: 1 }, 'a': { first: 1 }, '0-1': 'x', '1-0': { first: 2.5 } }, rounds);
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(clean)), { '0-0': { first: 1 } });
+
+  const design = parseSharedDesign(JSON.stringify({ title: '大会', logo: 'javascript:alert(1)', main: 'red;}', accent: '#112233', deep: 1, pattern: 'x', palettes: [{ name: 'a', main: '#000000', accent: '#ffffff', deep: true }, { main: 'x' }] }));
+  assert.strictEqual(design.title, '大会');
+  assert.strictEqual(design.logo, null);
+  assert.strictEqual(design.main, null);
+  assert.strictEqual(design.accent, '#112233');
+  assert.strictEqual(design.deep, true);
+  assert.strictEqual(design.pattern, 'gradient');
+  assert.strictEqual(design.palettes.length, 1);
+  assert.strictEqual(parseSharedDesign('こわれた').pattern, 'gradient');
+  assert.strictEqual(parseSharedDesign(JSON.stringify({ logo: 'data:image/png;base64,AAAA' })).logo, 'data:image/png;base64,AAAA');
 }
 
 // シード指定の整理: いない人を外し、枠を超えた分は後ろから外し、重複はまとめる

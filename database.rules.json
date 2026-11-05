@@ -1,0 +1,26 @@
+{
+  "rules": {
+    ".read": false,
+    ".write": false,
+    "tournaments": {
+      "$id": {
+        ".read": "$id.length >= 20",
+        ".write": "$id.length >= 20",
+        ".validate": "newData.hasChildren(['v', 'bracket', 'design', 'createdAt'])",
+        "v": { ".validate": "newData.val() === 1" },
+        "bracket": { ".validate": "newData.isString() && newData.val().length <= 200000" },
+        "design": { ".validate": "newData.isString() && newData.val().length <= 1500000" },
+        "createdAt": { ".validate": "newData.isNumber()" },
+        "results": {
+          "$table": {
+            ".validate": "$table.matches(/^[0-9]+-[0-9]+$/)",
+            "first": { ".validate": "newData.isNumber()" },
+            "second": { ".validate": "newData.isNumber()" },
+            "$other": { ".validate": false }
+          }
+        },
+        "$other": { ".validate": false }
+      }
+    }
+  }
+}
