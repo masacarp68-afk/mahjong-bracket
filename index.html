@@ -158,6 +158,21 @@
   .byes li.hl { background: var(--warn-soft); }
   .help { margin-top: 12px; font-size: 13px; color: var(--on-bg-muted); }
 
+  /* 共有 */
+  #share-slot { max-width: 1400px; margin: 0 auto; padding: 12px 16px 0; }
+  #share-slot:empty { display: none; }
+  .share-box { padding: 10px 12px; background: var(--paper); border: 1px solid var(--line); border-radius: var(--radius); color: var(--ink); font-size: 13px; }
+  .share-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+  .share-status { font-weight: 700; }
+  .share-status::before { content: ''; display: inline-block; width: 9px; height: 9px; margin-right: 6px; border-radius: 50%; background: var(--muted); }
+  .share-status.online::before { background: var(--felt); }
+  .share-status.offline { color: var(--warn); }
+  .share-status.offline::before { background: var(--warn); }
+  .share-note { margin: 6px 0 0; color: var(--muted); font-size: 12px; }
+  .share-link { flex: 1 1 260px; min-width: 0; padding: 5px 8px; font: inherit; color: var(--ink); background: #fff; border: 1px solid var(--line); border-radius: 6px; }
+  .share-box button.confirming { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .share-loading { padding: 40px 0; text-align: center; color: var(--on-bg); }
+
   /* デザイン・画像保存 */
   #design-slot:not(:empty) { padding: 20px 20px 0; }
   .toolbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
@@ -199,6 +214,7 @@
   <span class="info" id="info"></span>
   <span id="header-actions"></span>
 </header>
+<div id="share-slot"></div>
 <div id="design-slot"></div>
 <main id="app"></main>
 
@@ -482,6 +498,135 @@ function planSides(rounds, sides, W, H, nameEm) {
   return best;
 }
 
+/* 共有: サーバーとやり取りするデータの処理 */
+
+/** 共有リンク用のID。推測されないよう128ビットの乱数を使う。 */
+function newShareId() {
+  const bytes = crypto.getRandomValues(new Uint8Array(16));
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
+  let id = '', bits = 0, value = 0;
+  bytes.forEach(byte => {
+    value = (value << 8) | byte;
+    bits += 8;
+    while (bits >= 6) {
+      bits -= 6;
+      id += chars[(value >> bits) & 63];
+    }
+    value &= (1 << bits) - 1;
+  });
+  return id + chars[value << (6 - bits)];
+}
+
+function setTreePath(tree, keys, data) {
+  if (!keys.length) return data;
+  const root = tree && typeof tree === 'object' ? { ...tree } : {};
+  const child = setTreePath(root[keys[0]], keys.slice(1), data);
+  if (child === null || child === undefined) delete root[keys[0]];
+  else root[keys[0]] = child;
+  return Object.keys(root).length ? root : null;
+}
+
+/** Firebaseの受信イベント(put/patch)を手元のデータに反映した結果を返す */
+function applyStreamEvent(tree, path, data, isPatch) {
+  const keys = path.split('/').filter(Boolean);
+  if (!isPatch) return setTreePath(tree, keys, data);
+  let next = tree;
+  Object.keys(data || {}).forEach(key => {
+    next = setTreePath(next, keys.concat(key.split('/').filter(Boolean)), data[key]);
+  });
+  return next;
+}
+
+/** サーバーへ送る差分。席ごとに { '卓/席': 値 または null } で作り、他の席を上書きしない。 */
+function resultPatch(before, after) {
+  const patch = {};
+  new Set([...Object.keys(before), ...Object.keys(after)]).forEach(key => {
+    const a = before[key] || {}, b = after[key] || {};
+    ['first', 'second'].forEach(field => {
+      if (a[field] !== b[field]) patch[`${key}/${field}`] = b[field] === undefined ? null : b[field];
+    });
+  });
+  return patch;
+}
+
+/** 変わった卓だけを { 卓: 新しい結果 または null } で返す */
+function resultChanges(before, after) {
+  const changes = {};
+  new Set([...Object.keys(before), ...Object.keys(after)]).forEach(key => {
+    const a = before[key] || {}, b = after[key] || {};
+    if (a.first !== b.first || a.second !== b.second) changes[key] = after[key] || null;
+  });
+  return changes;
+}
+
+/** beforeにあってafterで消えた順位の数 */
+function removedResultCount(before, after) {
+  let removed = 0;
+  Object.keys(before).forEach(key => {
+    ['first', 'second'].forEach(field => {
+      const now = after[key] ? after[key][field] : undefined;
+      if (before[key][field] !== undefined && now === undefined) removed++;
+    });
+  });
+  return removed;
+}
+
+/** 受信した結果から、表に存在する卓の正しい値だけを残す */
+function cleanResults(raw, rounds) {
+  const clean = {};
+  Object.keys(raw || {}).forEach(key => {
+    const match = /^(\d+)-(\d+)$/.exec(key);
+    const round = match && rounds[Number(match[1])];
+    const value = raw[key];
+    if (!round || !round.tables[Number(match[2])] || !value || typeof value !== 'object') return;
+    const entry = {};
+    ['first', 'second'].forEach(field => { if (Number.isInteger(value[field])) entry[field] = value[field]; });
+    if (Object.keys(entry).length) clean[key] = entry;
+  });
+  return clean;
+}
+
+/** 受信した表を読む。形が正しくなければnull。 */
+function parseSharedBracket(text) {
+  let data;
+  try { data = JSON.parse(text); } catch (e) { return null; }
+  const { players, rounds } = data || {};
+  if (!Array.isArray(players) || players.length < 4 || !players.every(p => typeof p === 'string')) return null;
+  if (!Array.isArray(rounds) || !rounds.length) return null;
+  const validRef = (ref, r) => {
+    if (!ref || typeof ref !== 'object') return false;
+    if (ref.p !== undefined) return Number.isInteger(ref.p) && ref.p >= 0 && ref.p < players.length;
+    return Number.isInteger(ref.r) && ref.r >= 0 && ref.r < r
+      && Number.isInteger(ref.t) && ref.t >= 0 && ref.t < rounds[ref.r].tables.length
+      && (ref.rank === 1 || ref.rank === 2);
+  };
+  const valid = rounds.every((round, r) => round && Array.isArray(round.tables) && Array.isArray(round.byes)
+    && round.tables.length > 0
+    && round.tables.every(t => t && Array.isArray(t.slots) && t.slots.length >= 3 && t.slots.every(s => validRef(s, r)))
+    && round.byes.every(s => validRef(s, r)));
+  return valid ? { players, rounds } : null;
+}
+
+/** 受信したデザインを読む。色やロゴは決まった形のものだけ通す。 */
+function parseSharedDesign(text) {
+  let data;
+  try { data = JSON.parse(text); } catch (e) { data = null; }
+  const raw = data && typeof data === 'object' ? data : {};
+  const color = value => (typeof value === 'string' && /^#[0-9a-fA-F]{6}$/.test(value) ? value : null);
+  return {
+    title: typeof raw.title === 'string' ? raw.title.slice(0, 200) : '',
+    logo: typeof raw.logo === 'string' && /^data:image\/[a-z+.-]+;base64,[A-Za-z0-9+/=]+$/.test(raw.logo) ? raw.logo : null,
+    main: color(raw.main),
+    accent: color(raw.accent),
+    deep: !!raw.deep,
+    pattern: ['gradient', 'stripe', 'dots', 'asanoha'].includes(raw.pattern) ? raw.pattern : 'gradient',
+    palettes: Array.isArray(raw.palettes)
+      ? raw.palettes.filter(p => p && typeof p.name === 'string' && color(p.main) && color(p.accent))
+        .map(p => ({ name: p.name.slice(0, 40), main: p.main, accent: p.accent, deep: !!p.deep }))
+      : [],
+  };
+}
+
 /** 卓の中で「同じ卓の出身者」が同席している枠の組(再戦確定)を返す */
 function sameSourcePairs(table) {
   const pairs = [];
@@ -657,11 +802,25 @@ let state = { draft: '', seeds: [], players: null, rounds: null, results: {}, de
 let notice = '';
 let confirmingReset = false;
 let designOpen = false;
+
+// 共有の設定。URLだけでは大会を読めないよう、ルール側で一覧の取得を禁止している(database.rules.json)
+const SHARE_DB_URL = 'https://mahjong-bracket-default-rtdb.asia-southeast1.firebasedatabase.app';
+const shareSlot = document.getElementById('share-slot');
+let shareId = null;      // 共有中の大会のID
+let share = null;        // 共有中の通信の状態
+let shareMessage = '';   // 共有まわりのお知らせ
+let memoryOnly = false;  // 共有が終わった表を、手元の別の表を消さないよう保存しない状態
+let confirmingEnd = false;
 let exportTarget = 'all';
 
+// 共有中の表は、手元の表を上書きしないよう別の場所に保存する
+function storageKey() {
+  return shareId ? `${STORAGE_KEY}:${shareId}` : STORAGE_KEY;
+}
 function save() {
+  if (memoryOnly) return true;
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({ version: SCHEMA_VERSION, ...state }));
+    localStorage.setItem(storageKey(), JSON.stringify({ version: SCHEMA_VERSION, ...state }));
     return true;
   } catch (e) {
     return false;
@@ -669,7 +828,7 @@ function save() {
 }
 function load() {
   try {
-    const saved = JSON.parse(localStorage.getItem(STORAGE_KEY));
+    const saved = JSON.parse(localStorage.getItem(storageKey()));
     if (saved && saved.version === SCHEMA_VERSION) {
       state = {
         draft: saved.draft || '', seeds: saved.seeds || [], players: saved.players || null, rounds: saved.rounds || null, results: saved.results || {},
@@ -789,6 +948,7 @@ function renderSetup() {
     notice = '';
     save();
     render();
+    if (share) publishBracket();
   });
 }
 
@@ -853,7 +1013,8 @@ function byesHtml(byes, r) {
 function renderBracket() {
   const n = state.players.length;
   info.textContent = `${n}人・全${state.rounds.length}回戦`;
-  headerActions.innerHTML = `<button id="reset" class="${confirmingReset ? 'confirming' : ''}">${confirmingReset ? '結果が消えます。やり直す' : '抽選し直す'}</button>`;
+  const resetConfirm = share ? '全員の画面の結果が消えます。やり直す' : '結果が消えます。やり直す';
+  headerActions.innerHTML = `<button id="reset" class="${confirmingReset ? 'confirming' : ''}">${confirmingReset ? resetConfirm : '抽選し直す'}</button>`;
   document.getElementById('reset').addEventListener('click', () => {
     if (!confirmingReset) {
       confirmingReset = true;
@@ -873,6 +1034,9 @@ function renderBracket() {
   const finalRes = state.results[`${state.rounds.length - 1}-0`];
   const champion = finalRes && finalRes.first !== undefined ? finalRes.first : null;
   const sides = bracketSides(state.rounds, state.rounds.map((_, r) => r));
+  // 他の人の入力で作り直しても、横スクロールの位置を保つ
+  const previous = app.querySelector('.bracket');
+  const scrollLeft = previous ? previous.scrollLeft : 0;
   const counted = new Set();
   const roundCount = r => {
     if (counted.has(r)) return '';
@@ -895,6 +1059,7 @@ function renderBracket() {
     </div>
     <p class="help">各卓の1位・2位を押すと次の卓に名前が入ります。もう一度押すと取り消せます。名前にカーソルを合わせると同じ人が光ります。線は回戦の流れを表し、勝ち上がると左右の反対側の卓に入ることもあります。誰がどこから来たかは席の「A卓1位」などで確認できます。</p>`;
   drawScreenLinks();
+  app.querySelector('.bracket').scrollLeft = scrollLeft;
 }
 
 /** 画面の回戦の間に線を引く。各卓の位置を測って、1本の縦線へつなぐ。 */
@@ -932,9 +1097,15 @@ function drawScreenLinks() {
 }
 
 function render() {
+  renderShareSlot();
   if (state.rounds) {
     if (!designSlot.firstChild) renderDesignSlot();
     renderBracket();
+  } else if (share && !share.loaded) {
+    designSlot.innerHTML = '';
+    info.textContent = '';
+    headerActions.innerHTML = '';
+    app.innerHTML = '<p class="share-loading">共有された大会を読み込んでいます…</p>';
   } else {
     designSlot.innerHTML = '';
     renderSetup();
@@ -1088,6 +1259,7 @@ function designChanged() {
   applyTheme();
   renderEventHead();
   if (!save()) setExportStatus('保存できませんでした。ロゴを小さい画像にしてください。');
+  if (share) publishDesignSoon();
 }
 
 /** ロゴを読み込み、保存用に縮小して、色を抽出する */
@@ -1647,6 +1819,7 @@ app.addEventListener('click', e => {
   const id = Number(btn.dataset.id);
   const field = btn.dataset.rank === '1' ? 'first' : 'second';
   const other = field === 'first' ? 'second' : 'first';
+  const before = JSON.parse(JSON.stringify(state.results));
   const res = state.results[key] || (state.results[key] = {});
   if (res[field] === id) {
     delete res[field];
@@ -1660,6 +1833,7 @@ app.addEventListener('click', e => {
   confirmingReset = false;
   save();
   render();
+  if (share) publishResults(before);
 });
 
 function highlight(id, on) {
@@ -1674,9 +1848,352 @@ app.addEventListener('mouseout', e => {
   if (el) highlight(el.dataset.player, false);
 });
 
+/* ---------- 共有 ---------- */
+const SHARE_LINK_PARAM = 't';
+const MAX_DESIGN_LENGTH = 1500000;
+
+function shareLink() {
+  return `${location.origin}${location.pathname}?${SHARE_LINK_PARAM}=${shareId}`;
+}
+function encodeBracket() {
+  return JSON.stringify({ players: state.players, rounds: state.rounds });
+}
+function encodeDesign() {
+  return JSON.stringify(state.design);
+}
+
+function renderShareSlot() {
+  if (!SHARE_DB_URL) {
+    shareSlot.innerHTML = '';
+    return;
+  }
+  const message = shareMessage ? `<div class="notice" role="status">${esc(shareMessage)}</div>` : '';
+  if (share) {
+    const labels = { connecting: '接続中…', online: '共有中', offline: '接続が切れています。再接続しています…' };
+    shareSlot.innerHTML = `
+      <div class="share-box">
+        <div class="share-row">
+          <span class="share-status ${share.status}" role="status">${labels[share.status]}</span>
+          <input class="share-link" id="share-link" readonly aria-label="共有リンク" value="${esc(shareLink())}">
+          <button id="share-copy">リンクをコピー</button>
+          <button id="share-end" class="${confirmingEnd ? 'confirming' : ''}">${confirmingEnd ? 'サーバーから消します。終える' : '共有を終える'}</button>
+        </div>
+        <p class="share-note">このリンクを知っている人は結果を変更できます。運営メンバーだけに送り、SNSには載せないでください。大会が終わったら「共有を終える」を押してください。</p>
+      </div>${message}`;
+  } else if (state.rounds) {
+    shareSlot.innerHTML = `
+      <div class="share-box">
+        <div class="share-row">
+          <button id="share-start">共有を始める</button>
+          <span>運営メンバーと同時に結果を入力できます。</span>
+        </div>
+        <p class="share-note">共有を始めると、参加者名、結果、大会名、ロゴがGoogleのサーバー(Firebase)に保存されます。</p>
+      </div>${message}`;
+  } else {
+    shareSlot.innerHTML = message;
+  }
+}
+
+shareSlot.addEventListener('click', e => {
+  if (e.target.id === 'share-start') startShare();
+  else if (e.target.id === 'share-copy') copyShareLink();
+  else if (e.target.id === 'share-end') endShare();
+  else if (e.target.id === 'share-link') e.target.select();
+});
+
+async function copyShareLink() {
+  const input = document.getElementById('share-link');
+  try {
+    await navigator.clipboard.writeText(shareLink());
+    shareMessage = 'リンクをコピーしました。';
+  } catch (err) {
+    input.select();
+    shareMessage = 'コピーできませんでした。選択したリンクを手動でコピーしてください。';
+  }
+  const selected = document.activeElement === input;
+  renderShareSlot();
+  if (selected) document.getElementById('share-link').select();
+}
+
+function newShareState() {
+  return { status: 'connecting', tree: null, loaded: false, pending: 0, queue: Promise.resolve(), failed: false, bracket: null, design: null, designTimer: null, source: null, retryTimer: null };
+}
+
+async function shareRequest(id, path, method, body) {
+  const url = `${SHARE_DB_URL}/tournaments/${id}${path}.json?print=silent`;
+  const res = await fetch(url, {
+    method,
+    headers: { 'Content-Type': 'application/json' },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+}
+
+async function startShare() {
+  const design = encodeDesign();
+  if (design.length > MAX_DESIGN_LENGTH) {
+    shareMessage = 'ロゴが大きすぎて共有できません。小さい画像にしてください。';
+    renderShareSlot();
+    return;
+  }
+  const id = newShareId();
+  const bracket = encodeBracket();
+  const payload = { v: 1, bracket, design, createdAt: Date.now() };
+  if (Object.keys(state.results).length) payload.results = state.results;
+  shareMessage = '共有を始めています…';
+  renderShareSlot();
+  try {
+    await shareRequest(id, '', 'PUT', payload);
+  } catch (err) {
+    shareMessage = '共有を始められませんでした。通信状況を確認して、もう一度押してください。';
+    renderShareSlot();
+    return;
+  }
+  shareId = id;
+  memoryOnly = false;
+  share = newShareState();
+  share.tree = JSON.parse(JSON.stringify(payload));
+  share.loaded = true;
+  share.bracket = bracket;
+  share.design = design;
+  shareMessage = 'リンクをコピーして、運営メンバーに送ってください。';
+  history.replaceState(null, '', shareLink());
+  save();
+  // このブラウザで始めた共有は、終わったら手元の表として残してよい
+  try { localStorage.setItem(`${storageKey()}:owner`, '1'); } catch (e) {}
+  connectShare();
+  render();
+}
+
+function connectShare() {
+  if (!share) return;
+  const current = share;
+  const source = new EventSource(`${SHARE_DB_URL}/tournaments/${shareId}.json`);
+  current.source = source;
+  const onEvent = isPatch => e => {
+    if (share !== current) return;
+    let message;
+    try { message = JSON.parse(e.data); } catch (err) { return; }
+    if (!message || typeof message.path !== 'string') return;
+    current.tree = applyStreamEvent(current.tree, message.path, message.data, isPatch);
+    setShareStatus('online');
+    if (current.tree === null) finishShare();
+    else syncFromTree();
+  };
+  source.addEventListener('put', onEvent(false));
+  source.addEventListener('patch', onEvent(true));
+  source.addEventListener('open', () => { if (share === current) setShareStatus('online'); });
+  source.addEventListener('error', () => {
+    if (share !== current) return;
+    setShareStatus('offline');
+    // 自動で再接続しない状態になったら、作り直す
+    if (source.readyState === EventSource.CLOSED) {
+      clearTimeout(current.retryTimer);
+      current.retryTimer = setTimeout(connectShare, 5000);
+    }
+  });
+  // サーバー側でルールが変わったときなどに届く
+  ['cancel', 'auth_revoked'].forEach(name => source.addEventListener(name, () => {
+    if (share !== current) return;
+    source.close();
+    setShareStatus('offline');
+    clearTimeout(current.retryTimer);
+    current.retryTimer = setTimeout(connectShare, 5000);
+  }));
+}
+
+function setShareStatus(status) {
+  if (!share || share.status === status) return;
+  share.status = status;
+  // つながり直したら、通信失敗のお知らせは片付ける
+  if (status === 'online' && share.failed) {
+    share.failed = false;
+    shareMessage = '';
+  }
+  renderShareSlot();
+}
+
+/** サーバーの最新の内容を画面へ反映する。自分の送信中は結果が巻き戻らないよう待つ。 */
+function syncFromTree() {
+  if (!share || share.pending || !share.tree) return;
+  const tree = share.tree;
+  let changed = false;
+  const firstLoad = !share.loaded;
+
+  if (tree.bracket !== share.bracket) {
+    const parsed = parseSharedBracket(tree.bracket);
+    if (!parsed) {
+      shareMessage = '共有された表を読み込めませんでした。';
+      share.loaded = true;
+      render();
+      return;
+    }
+    state.players = parsed.players;
+    state.rounds = parsed.rounds;
+    state.results = {};
+    share.bracket = tree.bracket;
+    designSlot.innerHTML = '';
+    notice = firstLoad ? '' : 'ほかの運営メンバーが抽選し直しました。';
+    confirmingReset = false;
+    changed = true;
+  }
+
+  if (tree.design !== share.design && !share.designTimer) {
+    share.design = tree.design;
+    state.design = { ...defaultDesign(), ...parseSharedDesign(tree.design) };
+    applyTheme();
+    renderEventHead();
+    // 入力中の欄は作り直さない
+    if (designSlot.firstChild && !designSlot.contains(document.activeElement)) renderDesignSlot();
+    changed = true;
+  }
+
+  if (state.rounds) {
+    const next = cleanResults(tree.results, state.rounds);
+    pruneResults(state.rounds, next);
+    if (Object.keys(resultChanges(state.results, next)).length) {
+      const removed = removedResultCount(state.results, next);
+      if (removed && !firstLoad) notice = `ほかの運営メンバーの修正で、順位を${removed}件取り消しました。`;
+      state.results = next;
+      changed = true;
+    }
+  }
+
+  share.loaded = true;
+  if (changed || firstLoad) {
+    save();
+    render();
+  }
+}
+
+/**
+ * 共有中の書き込み。失敗したらサーバーの内容へ戻す。
+ * 同時に送ると通信の順番が入れ替わって古い内容が残るので、1件ずつ順番に送る。
+ */
+function shareWrite(path, method, body, failure) {
+  const current = share;
+  if (!current) return;
+  const id = shareId;
+  current.pending++;
+  current.queue = current.queue.then(() => sendShareWrite(current, id, path, method, body, failure));
+}
+
+async function sendShareWrite(current, id, path, method, body, failure) {
+  try {
+    await shareRequest(id, path, method, body);
+    current.failed = false;
+    shareMessage = '';
+  } catch (err) {
+    current.failed = true;
+    shareMessage = failure;
+  } finally {
+    current.pending--;
+    if (share === current) {
+      syncFromTree();
+      renderShareSlot();
+    }
+  }
+}
+
+function publishResults(before) {
+  const changes = resultPatch(before, state.results);
+  if (!Object.keys(changes).length) return;
+  shareWrite('/results', 'PATCH', changes,'結果を保存できませんでした。通信状況を確認してください。');
+}
+
+function publishBracket() {
+  share.bracket = encodeBracket();
+  shareWrite('', 'PATCH', { bracket: share.bracket, results: null }, '抽選結果を保存できませんでした。通信状況を確認してください。');
+}
+
+function publishDesignSoon() {
+  clearTimeout(share.designTimer);
+  const current = share;
+  current.designTimer = setTimeout(() => {
+    current.designTimer = null;
+    if (share !== current) return;
+    const design = encodeDesign();
+    if (design.length > MAX_DESIGN_LENGTH) {
+      shareMessage = 'ロゴが大きすぎて共有できません。小さい画像にしてください。';
+      renderShareSlot();
+      return;
+    }
+    current.design = design;
+    shareWrite('', 'PATCH', { design }, 'デザインを保存できませんでした。通信状況を確認してください。');
+  }, 700);
+}
+
+async function endShare() {
+  if (!confirmingEnd) {
+    confirmingEnd = true;
+    renderShareSlot();
+    setTimeout(() => {
+      if (confirmingEnd) {
+        confirmingEnd = false;
+        renderShareSlot();
+      }
+    }, 4000);
+    return;
+  }
+  confirmingEnd = false;
+  try {
+    await shareRequest(shareId, '', 'DELETE');
+    finishShare();
+  } catch (err) {
+    shareMessage = '共有を終えられませんでした。通信状況を確認して、もう一度押してください。';
+    renderShareSlot();
+  }
+}
+
+/** 共有の終了。表は手元に残すが、手元に別の表があれば上書きしない。 */
+function finishShare() {
+  if (!share) return;
+  const wasLoaded = share.loaded;
+  if (share.source) share.source.close();
+  clearTimeout(share.retryTimer);
+  clearTimeout(share.designTimer);
+  let owner = false;
+  try {
+    owner = localStorage.getItem(`${storageKey()}:owner`) === '1';
+    localStorage.removeItem(storageKey());
+    localStorage.removeItem(`${storageKey()}:owner`);
+  } catch (e) {}
+  share = null;
+  shareId = null;
+  confirmingEnd = false;
+  history.replaceState(null, '', location.pathname);
+
+  if (!wasLoaded && !state.rounds) {
+    load();
+    applyTheme();
+    shareMessage = 'この共有リンクの大会は見つかりませんでした。共有が終わった可能性があります。';
+    designSlot.innerHTML = '';
+    render();
+    return;
+  }
+  let local = null;
+  try { local = JSON.parse(localStorage.getItem(STORAGE_KEY)); } catch (e) {}
+  const sameTable = owner || !local || !local.rounds
+    || JSON.stringify([local.players, local.rounds]) === JSON.stringify([state.players, state.rounds]);
+  if (sameTable) {
+    shareMessage = '共有を終えました。この表はこのブラウザに残っています。';
+    save();
+  } else {
+    memoryOnly = true;
+    shareMessage = '共有は終了しました。このブラウザにある別の表を消さないよう、この表は保存していません。ページを閉じると消えるので、必要なら画像を保存してください。';
+  }
+  render();
+}
+
+const linkedShare = new URLSearchParams(location.search).get(SHARE_LINK_PARAM);
+if (SHARE_DB_URL && linkedShare && /^[A-Za-z0-9_-]{20,64}$/.test(linkedShare)) {
+  shareId = linkedShare;
+  share = newShareState();
+}
 load();
 applyTheme();
 render();
+if (share) connectShare();
 </script>
 </body>
 </html>
