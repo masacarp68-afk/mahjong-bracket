@@ -8,8 +8,8 @@ const html = fs.readFileSync(path.join(__dirname, 'index.html'), 'utf8');
 const code = html.split('/*LOGIC-START*/')[1].split('/*LOGIC-END*/')[0];
 const ctx = { crypto: require('crypto').webcrypto, Uint32Array, Math, Set, Array };
 vm.createContext(ctx);
-vm.runInContext(code + '\nthis.api={parseNames,findDuplicates,tableLabel,roundShape,buildBracket,sameSourcePairs,resolveRef,pruneResults,rematchesInTable,extractColors,buildPalettes,themeFrom,contrastRatio};', ctx);
-const { parseNames, findDuplicates, tableLabel, roundShape, buildBracket, sameSourcePairs, resolveRef, pruneResults, rematchesInTable, extractColors, buildPalettes, themeFrom, contrastRatio } = ctx.api;
+vm.runInContext(code + '\nthis.api={parseNames,findDuplicates,tableLabel,roundShape,buildBracket,normalizeSeeds,sameSourcePairs,resolveRef,pruneResults,rematchesInTable,extractColors,buildPalettes,themeFrom,contrastRatio};', ctx);
+const { parseNames, findDuplicates, tableLabel, roundShape, buildBracket, normalizeSeeds, sameSourcePairs, resolveRef, pruneResults, rematchesInTable, extractColors, buildPalettes, themeFrom, contrastRatio } = ctx.api;
 
 // 配色: 白地に赤と青のロゴから、白より赤・青を優先して拾う
 {
@@ -80,9 +80,9 @@ for (let n = 4; n <= 64; n++) {
     const small = round.tables.filter(t => t.slots.length === 3).length;
     assert.ok(round.tables.every(t => t.slots.length === 3 || t.slots.length === 4), `n=${n} r=${r} 卓サイズ`);
     assert.ok(small <= 1, `n=${n} r=${r} 3人卓`);
-    assert.ok(round.byes.length <= 2, `n=${n} r=${r} シード数`);
 
     if (r === 0) return;
+    assert.strictEqual(round.byes.length, 0, `n=${n} r=${r} シードは1回戦だけ`);
     // 前回の卓の1位2位と前回シードが、過不足なく今回に入る
     const prev = rounds[r - 1];
     const expected = [];
@@ -99,6 +99,25 @@ for (let n = 4; n <= 64; n++) {
       if (pairs.length) forced.push({ n, round: r + 1, isFinal: r === rounds.length - 1, pairs: pairs.length, sizes: new Set(sources(t)).size });
     });
   });
+
+  // 2回戦の人数は 4・8・16・32・64 のどれか(16人ちょうどなどは全員1回戦から)
+  if (rounds.length > 1) {
+    const field = rounds[1].tables.reduce((sum, t) => sum + t.slots.length, 0);
+    assert.ok([4, 8, 16, 32].includes(field), `n=${n} 2回戦${field}人`);
+    assert.ok(field <= n && field * 2 >= n, `n=${n} 2回戦${field}人`);
+  }
+
+  // シードを指定すると必ずシードになり、残りの枠も抽選で埋まる
+  const slotCount = rounds[0].byes.length;
+  if (slotCount) {
+    for (const picked of [[0], [...Array(slotCount).keys()].map(i => n - 1 - i)]) {
+      const seeded = buildBracket(n, picked, undefined, 3);
+      const byeIds = Array.from(seeded[0].byes, b => b.p);
+      assert.strictEqual(byeIds.length, slotCount, `n=${n} シード枠`);
+      assert.strictEqual(new Set(byeIds).size, slotCount, `n=${n} シード重複`);
+      picked.forEach(p => assert.ok(byeIds.includes(p), `n=${n} 指定した${p}がシードでない`));
+    }
+  }
 
   // 2回戦: 同じ1回戦卓の2人が同卓できない理由がない限り、再戦ゼロ
   if (rounds.length > 2) {
@@ -135,6 +154,26 @@ assert.deepStrictEqual(seats, [['A1', 'B2', 'C1', 'D2'], ['A2', 'B1', 'C2', 'D1'
 
 // 3人打ち: 7人なら4人卓+3人卓
 assert.deepStrictEqual([...roundShape(7).sizes], [4, 3]);
+
+// 設計どおりの卓数とシード数(4人卓の数, 3人卓の数, シード)
+const shapes = { 4: [1, 0, 0], 5: [0, 1, 2], 6: [1, 0, 2], 8: [2, 0, 0], 9: [0, 1, 6], 16: [4, 0, 0], 20: [2, 0, 12], 30: [7, 0, 2], 32: [8, 0, 0], 33: [0, 1, 30], 40: [4, 0, 24], 48: [8, 0, 16], 62: [15, 0, 2], 63: [15, 1, 0], 64: [16, 0, 0] };
+for (const [n, [four, three, byes]] of Object.entries(shapes)) {
+  const s = roundShape(Number(n));
+  assert.strictEqual(s.sizes.filter(x => x === 4).length, four, `n=${n} 4人卓`);
+  assert.strictEqual(s.sizes.filter(x => x === 3).length, three, `n=${n} 3人卓`);
+  assert.strictEqual(s.byes, byes, `n=${n} シード`);
+}
+
+// 勝ち上がった人は2回戦の卓に均等に分かれる: 40人は各卓1人、48人は各卓2人
+for (const [n, each] of [[40, 1], [48, 2]]) {
+  buildBracket(n)[1].tables.forEach(t => {
+    assert.strictEqual(t.slots.filter(s => s.r !== undefined).length, each, `n=${n} 勝ち上がりの偏り`);
+  });
+}
+
+// シード指定の整理: いない人を外し、枠を超えた分は後ろから外し、重複はまとめる
+assert.deepStrictEqual([...normalizeSeeds(['a', 'b', 'c', 'd'], ['b', 'x', 'c', 'b', 'd'], 2)], ['b', 'c']);
+assert.deepStrictEqual([...normalizeSeeds(['a', 'b'], ['a'], 0)], []);
 
 const byN = {};
 forced.forEach(f => { (byN[f.n] = byN[f.n] || []).push(`${f.isFinal ? '決勝' : f.round + '回戦'}×${f.pairs}`); });
