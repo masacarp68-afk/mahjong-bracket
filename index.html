@@ -103,8 +103,11 @@
     border-radius: 4px;
     font-weight: 700;
   }
-  .bracket { display: flex; gap: 16px; overflow-x: auto; padding-bottom: 12px; align-items: flex-start; }
-  .round { flex: 0 0 256px; }
+  .bracket { position: relative; display: flex; gap: 40px; overflow-x: auto; padding-bottom: 12px; align-items: stretch; }
+  .round { position: relative; z-index: 1; flex: 0 0 256px; display: flex; flex-direction: column; }
+  .round-body { flex: 1; display: flex; flex-direction: column; justify-content: center; }
+  .round-links { position: absolute; top: 0; left: 0; pointer-events: none; }
+  .round-links path { fill: none; stroke: var(--on-bg-muted); stroke-width: 2; }
   .round-head {
     display: flex;
     align-items: baseline;
@@ -337,6 +340,13 @@ function searchRound(slots, rng) {
   return groups;
 }
 
+/** 表示用に、席を元の卓順(シードは最後)に、卓を先頭の席の順に並べる */
+function sortTables(groups) {
+  const order = slot => (slot.ref.t === undefined ? Number.MAX_SAFE_INTEGER : slot.ref.t * 2 + slot.ref.rank);
+  groups.forEach(group => group.sort((a, b) => order(a) - order(b)));
+  return groups.sort((a, b) => order(a[0]) - order(b[0]));
+}
+
 function buildOnce(n, seeds, rng) {
   const first = roundShape(n);
   // 指定されたシードを後ろに置く。後ろから順にシード枠になり、余った枠は抽選で埋まる。
@@ -377,6 +387,7 @@ function buildOnce(n, seeds, rng) {
     if (r === 0 && isCleanCross(next)) current = crossTables(next);
     else if (next.length <= 4) current = [next];
     else current = searchRound(next, rng);
+    current = sortTables(current);
     current.forEach(g => { total += groupScore(g); });
   }
   return { rounds, total };
@@ -795,11 +806,48 @@ function renderBracket() {
       ${state.rounds.map((round, r) => `
         <section class="round">
           <div class="round-head"><h2>${roundName(r)}</h2><span>${round.tables.length}卓${round.byes.length ? `・シード${round.byes.length}` : ''}</span></div>
-          ${byesHtml(round, r)}
-          ${round.tables.map((t, i) => tableHtml(t, r, i)).join('')}
+          <div class="round-body">
+            ${byesHtml(round, r)}
+            ${round.tables.map((t, i) => tableHtml(t, r, i)).join('')}
+          </div>
         </section>`).join('')}
     </div>
-    <p class="help">各卓の1位・2位を押すと次の卓に名前が入ります。もう一度押すと取り消せます。名前にカーソルを合わせると同じ人が光ります。</p>`;
+    <p class="help">各卓の1位・2位を押すと次の卓に名前が入ります。もう一度押すと取り消せます。名前にカーソルを合わせると同じ人が光ります。線は回戦の流れを表し、誰がどこから来たかは席の「A卓1位」などで確認できます。</p>`;
+  drawScreenLinks();
+}
+
+/** 画面の回戦の間に線を引く。各卓の位置を測って、1本の縦線へつなぐ。 */
+function drawScreenLinks() {
+  const bracket = app.querySelector('.bracket');
+  const box = bracket.getBoundingClientRect();
+  const rounds = [...bracket.querySelectorAll('.round-body')].map(body => {
+    const rect = body.parentElement.getBoundingClientRect();
+    return {
+      left: rect.left - box.left + bracket.scrollLeft,
+      right: rect.right - box.left + bracket.scrollLeft,
+      ys: [...body.children].map(el => {
+        const r = el.getBoundingClientRect();
+        return r.top - box.top + bracket.scrollTop + r.height / 2;
+      }),
+    };
+  });
+  let path = '';
+  rounds.slice(1).forEach((next, i) => {
+    const prev = rounds[i];
+    const barX = (prev.right + next.left) / 2;
+    prev.ys.forEach(y => { path += `M${prev.right} ${y}H${barX}`; });
+    next.ys.forEach(y => { path += `M${barX} ${y}H${next.left}`; });
+    path += `M${barX} ${Math.min(...prev.ys, ...next.ys)}V${Math.max(...prev.ys, ...next.ys)}`;
+  });
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.classList.add('round-links');
+  svg.setAttribute('width', bracket.scrollWidth);
+  svg.setAttribute('height', bracket.scrollHeight);
+  svg.setAttribute('aria-hidden', 'true');
+  const line = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+  line.setAttribute('d', path);
+  svg.appendChild(line);
+  bracket.prepend(svg);
 }
 
 function render() {
@@ -1043,7 +1091,7 @@ designSlot.addEventListener('click', e => {
 /* ---------- 画像保存 ---------- */
 const FONT_SANS = '"Hiragino Kaku Gothic ProN", "Yu Gothic UI", "Yu Gothic", Meiryo, sans-serif';
 const FONT_SERIF = '"Hiragino Mincho ProN", "Yu Mincho", serif';
-const IMG = { w: 1920, h: 1080, margin: 24, cardH: 88, cardGap: 16, gap: 16, blockGap: 12, colW: 256, head: 44, tableHead: 28, seat: 40, warnLine: 17, maxScale: 2, byesPerBlock: 12 };
+const IMG = { w: 1920, h: 1080, margin: 24, cardH: 88, cardGap: 16, gap: 16, blockGap: 12, colW: 256, head: 44, tableHead: 28, seat: 40, warnLine: 17, maxScale: 2, byesPerBlock: 12, roundGap: 44 };
 
 /** 高さlimitに収まるようにブロックを列へ詰める */
 function packColumns(blocks, limit) {
@@ -1074,12 +1122,49 @@ function fitLayout(sections, availW, availH) {
     sections.forEach(section => {
       packColumns(section.blocks, limit).forEach((blocks, i) => columns.push({ r: section.r, label: i === 0, blocks }));
     });
-    const contentW = columns.length * IMG.colW + (columns.length - 1) * IMG.gap;
-    const contentH = Math.max(...columns.map(c => c.blocks.reduce((sum, b) => sum + b.height + IMG.blockGap, 0))) - IMG.blockGap + IMG.head;
+    // 回戦の境目は線を引くので広めに空ける
+    let x = 0;
+    columns.forEach((col, i) => {
+      if (i) x += IMG.colW + (col.r === columns[i - 1].r ? IMG.gap : IMG.roundGap);
+      col.x = x;
+      col.height = col.blocks.reduce((sum, b) => sum + b.height + IMG.blockGap, 0) - IMG.blockGap;
+    });
+    const contentW = x + IMG.colW;
+    const contentH = Math.max(...columns.map(c => c.height)) + IMG.head;
     const scale = Math.min(IMG.maxScale, availW / contentW, availH / contentH);
     if (!best || scale > best.scale) best = { columns, contentW, contentH, scale };
   }
+  // 複数の回戦を載せるときは、トーナメント表らしく上下中央にそろえる
+  best.columns.forEach(col => {
+    col.top = IMG.head + (sections.length > 1 ? (best.contentH - IMG.head - col.height) / 2 : 0);
+  });
   return best;
+}
+
+/** 回戦の間の線。各卓から1本の縦線へつなぐ。誰がどこから来たかは席の「A卓1位」で示す。 */
+function drawRoundLinks(ctx, columns, theme) {
+  const centers = col => {
+    let y = col.top;
+    return col.blocks.map(block => {
+      const center = y + block.height / 2;
+      y += block.height + IMG.blockGap;
+      return center;
+    });
+  };
+  ctx.strokeStyle = theme.onBgMuted;
+  ctx.lineWidth = 2;
+  columns.forEach((col, i) => {
+    const next = columns[i + 1];
+    if (!next || next.r === col.r) return;
+    const from = centers(col), to = centers(next);
+    const barX = next.x - IMG.roundGap / 2;
+    ctx.beginPath();
+    from.forEach(y => { ctx.moveTo(col.x + IMG.colW, y); ctx.lineTo(barX, y); });
+    to.forEach(y => { ctx.moveTo(barX, y); ctx.lineTo(next.x, y); });
+    ctx.moveTo(barX, Math.min(...from, ...to));
+    ctx.lineTo(barX, Math.max(...from, ...to));
+    ctx.stroke();
+  });
 }
 
 function roundedRect(ctx, x, y, w, h, r) {
@@ -1343,8 +1428,9 @@ async function renderImage(target) {
   const scaledH = layout.contentH * layout.scale;
   ctx.translate(IMG.margin + (availW - scaledW) / 2, bodyY + (availH - scaledH) / 2);
   ctx.scale(layout.scale, layout.scale);
-  layout.columns.forEach((col, c) => {
-    const x = c * (IMG.colW + IMG.gap);
+  drawRoundLinks(ctx, layout.columns, theme);
+  layout.columns.forEach(col => {
+    const x = col.x;
     if (col.label) {
       ctx.textBaseline = 'middle';
       ctx.fillStyle = theme.onBg;
@@ -1358,7 +1444,7 @@ async function renderImage(target) {
     }
     ctx.fillStyle = theme.roundLine;
     ctx.fillRect(x, 28, IMG.colW, 2);
-    let y = IMG.head;
+    let y = col.top;
     col.blocks.forEach(block => {
       if (block.kind === 'table') drawTable(ctx, block, x, y, theme);
       else drawByes(ctx, block, x, y, theme);
