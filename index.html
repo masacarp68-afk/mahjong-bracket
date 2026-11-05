@@ -901,7 +901,10 @@ function renderEventHead() {
 function renderDesignSlot() {
   const d = state.design;
   const samePalette = p => p.main === d.main && p.accent === d.accent && !!p.deep === !!d.deep;
-  const targets = [['all', '全体(全回戦を1枚に)']].concat(state.rounds.map((_, r) => [String(r), `${roundName(r)}だけ`]));
+  const targets = [['all', '全体(全回戦を1枚に)']];
+  // 全2回戦の表では「全体」と同じになるので出さない
+  if (state.rounds.length > 2) targets.push(['to2', '2回戦まで(1回戦と2回戦を1枚に)']);
+  state.rounds.forEach((_, r) => targets.push([String(r), `${roundName(r)}だけ`]));
   if (!targets.some(([v]) => v === exportTarget)) exportTarget = 'all';
   designSlot.innerHTML = `
     <div class="toolbar">
@@ -1236,12 +1239,19 @@ function drawByes(ctx, block, x, y, theme) {
   });
 }
 
+/** 画像にする回戦と、その呼び名(全体のときは空) */
+function exportScope(target) {
+  if (target === 'all') return { shown: state.rounds.map((_, r) => r), label: '' };
+  if (target === 'to2') return { shown: [0, 1], label: '2回戦まで' };
+  return { shown: [Number(target)], label: roundName(Number(target)) };
+}
+
 async function exportImage(target) {
   setExportStatus('画像を作っています…');
   try {
     const blob = await renderImage(target);
     const title = (state.design.title || '麻雀トーナメント表').replace(/[\\/:*?"<>|]/g, '_');
-    const suffix = target === 'all' ? '全体' : roundName(Number(target));
+    const suffix = exportScope(target).label || '全体';
     const link = document.createElement('a');
     link.href = URL.createObjectURL(blob);
     link.download = `${title}_${suffix}.png`;
@@ -1258,8 +1268,7 @@ async function renderImage(target) {
   const d = state.design;
   const finalRes = state.results[`${state.rounds.length - 1}-0`];
   const measure = document.createElement('canvas').getContext('2d');
-  const isAll = target === 'all';
-  const shown = isAll ? state.rounds.map((_, r) => r) : [Number(target)];
+  const { shown, label: scopeLabel } = exportScope(target);
 
   // 回戦ごとに載せるものを用意し、1920×1080に一番大きく入る並べ方を探す
   const sections = shown.map(r => {
@@ -1308,7 +1317,7 @@ async function renderImage(target) {
     ctx.drawImage(logo, textX, cardCenter - lh / 2, lw, lh);
     textX += lw + 16;
   }
-  const champion = finalRes && finalRes.first !== undefined && (isAll || Number(target) === state.rounds.length - 1)
+  const champion = finalRes && finalRes.first !== undefined && shown.includes(state.rounds.length - 1)
     ? `優勝: ${state.players[finalRes.first]}${finalRes.second !== undefined ? ` / 準優勝: ${state.players[finalRes.second]}` : ''}`
     : '';
   const cardRight = IMG.margin + cardW - 18;
@@ -1318,7 +1327,7 @@ async function renderImage(target) {
   drawFitted(ctx, d.title || '麻雀トーナメント表', textX, cardCenter - 12, titleW, 30, 14, s => `bold ${s}px ${FONT_SERIF}`);
   ctx.fillStyle = '#6d6a60';
   ctx.font = `14px ${FONT_SANS}`;
-  ctx.fillText(`${state.players.length}人・全${state.rounds.length}回戦${isAll ? '' : `・${roundName(Number(target))}`}`, textX, cardCenter + 20);
+  ctx.fillText(`${state.players.length}人・全${state.rounds.length}回戦${scopeLabel ? `・${scopeLabel}` : ''}`, textX, cardCenter + 20);
   if (champion) {
     const bx = cardRight - championW;
     roundedRect(ctx, bx, IMG.margin + 20, championW, IMG.cardH - 40, 6);
