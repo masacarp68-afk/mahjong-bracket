@@ -433,6 +433,55 @@ function bracketSides(rounds, shown) {
   ].filter(s => s.tables.length || s.byes.length);
 }
 
+/**
+ * 決勝中央の画像の布置を決める。W×Hいっぱいに使い、名前が一番大きくなる列の分け方を選ぶ。
+ * nameEmは名前の幅(文字の大きさ1pxあたり)。外側の回戦は列を分けると縦に余裕ができる。
+ */
+function planSides(rounds, sides, W, H, nameEm) {
+  const LINK_GAP = 30, SUB_GAP = 10, PAD = 8, TAG_EM = 2.3, MAX_FONT = 38;
+  const HEAD = 0.8, TABLE_GAP = 0.35, SEAT_PER_FONT = 1.75;
+  const outer = sides[0].r;
+  const second = sides[1] ? sides[1].r : outer;
+  const chunk = (list, parts) => {
+    const size = Math.ceil(list.length / parts);
+    const out = [];
+    for (let i = 0; i < list.length; i += size) out.push(list.slice(i, i + size));
+    return out.length ? out : [list];
+  };
+  let best = null;
+  for (let outerParts = 1; outerParts <= 3; outerParts++) {
+    for (let secondParts = 1; secondParts <= 2; secondParts++) {
+      const cols = [];
+      sides.forEach((side, s) => {
+        const isFinal = side.r === rounds.length - 1;
+        const parts = isFinal ? 1 : side.r === outer ? outerParts : side.r === second ? secondParts : 1;
+        chunk(side.tables, parts).forEach((tables, i) => {
+          cols.push({ r: side.r, section: s, label: i === 0, tables });
+        });
+      });
+      let gaps = 0;
+      cols.forEach((col, i) => { if (i) gaps += col.section === cols[i - 1].section ? SUB_GAP : LINK_GAP; });
+      const colW = (W - gaps) / cols.length;
+      const units = Math.max(...cols.map(col => {
+        const seats = col.tables.reduce((sum, t) => sum + rounds[col.r].tables[t].slots.length, 0);
+        return seats + col.tables.length * HEAD + Math.max(0, col.tables.length - 1) * TABLE_GAP;
+      }));
+      const fit = H / units;
+      const font = Math.min(fit / SEAT_PER_FONT * 1.05, (colW - PAD * 2) / (nameEm + TAG_EM), MAX_FONT);
+      if (!best || font > best.font + 0.01) {
+        const seat = Math.min(fit, font * SEAT_PER_FONT * 1.2);
+        let x = 0;
+        cols.forEach((col, i) => {
+          if (i) x += colW + (col.section === cols[i - 1].section ? SUB_GAP : LINK_GAP);
+          col.x = x;
+        });
+        best = { cols, colW, font, seat, head: seat * HEAD, tableGap: seat * TABLE_GAP, pad: PAD };
+      }
+    }
+  }
+  return best;
+}
+
 /** 卓の中で「同じ卓の出身者」が同席している枠の組(再戦確定)を返す */
 function sameSourcePairs(table) {
   const pairs = [];
@@ -1123,7 +1172,7 @@ designSlot.addEventListener('click', e => {
 /* ---------- 画像保存 ---------- */
 const FONT_SANS = '"Hiragino Kaku Gothic ProN", "Yu Gothic UI", "Yu Gothic", Meiryo, sans-serif';
 const FONT_SERIF = '"Hiragino Mincho ProN", "Yu Mincho", serif';
-const IMG = { w: 1920, h: 1080, margin: 24, cardH: 88, cardGap: 16, gap: 16, blockGap: 12, colW: 256, head: 44, tableHead: 28, seat: 40, warnLine: 17, maxScale: 2, byesPerBlock: 12, roundGap: 44, gridColW: 256, sidesColW: 184 };
+const IMG = { w: 1920, h: 1080, margin: 24, cardH: 88, cardGap: 16, gap: 16, blockGap: 12, colW: 256, head: 44, tableHead: 28, seat: 40, warnLine: 17, maxScale: 2, byesPerBlock: 12 };
 
 /** 高さlimitに収まるようにブロックを列へ詰める */
 function packColumns(blocks, limit) {
@@ -1143,61 +1192,165 @@ function packColumns(blocks, limit) {
   return columns;
 }
 
-/** 1920×1080に一番大きく収まる列の組み方を探す。sectionsは回戦ごとのブロック一覧。 */
-function fitLayout(sections, availW, availH) {
-  const allBlocks = sections.flatMap(s => s.blocks);
-  const tallest = Math.max(...allBlocks.map(b => b.height + IMG.blockGap));
-  const total = allBlocks.reduce((sum, b) => sum + b.height + IMG.blockGap, 0);
+/** 1回戦分のブロックが1920×1080に一番大きく収まる列の組み方を探す */
+function fitLayout(blocks, availW, availH) {
+  const tallest = Math.max(...blocks.map(b => b.height + IMG.blockGap));
+  const total = blocks.reduce((sum, b) => sum + b.height + IMG.blockGap, 0);
   let best = null;
   for (let limit = tallest; limit <= total + 1; limit += 20) {
-    const columns = [];
-    sections.forEach((section, s) => {
-      packColumns(section.blocks, limit).forEach((blocks, i) => columns.push({ r: section.r, section: s, label: i === 0, count: section.count, blocks }));
-    });
-    // 回戦の境目は線を引くので広めに空ける
-    let x = 0;
-    columns.forEach((col, i) => {
-      if (i) x += IMG.colW + (col.section === columns[i - 1].section ? IMG.gap : IMG.roundGap);
-      col.x = x;
-      col.height = col.blocks.reduce((sum, b) => sum + b.height + IMG.blockGap, 0) - IMG.blockGap;
-    });
-    const contentW = x + IMG.colW;
-    const contentH = Math.max(...columns.map(c => c.height)) + IMG.head;
+    const columns = packColumns(blocks, limit);
+    const contentW = columns.length * IMG.colW + (columns.length - 1) * IMG.gap;
+    const contentH = Math.max(...columns.map(col => col.reduce((sum, b) => sum + b.height + IMG.blockGap, 0))) - IMG.blockGap + IMG.head;
     const scale = Math.min(IMG.maxScale, availW / contentW, availH / contentH);
     if (!best || scale > best.scale) best = { columns, contentW, contentH, scale };
   }
-  // 複数の回戦を載せるときは、トーナメント表らしく上下中央にそろえる
-  best.columns.forEach(col => {
-    col.top = IMG.head + (sections.length > 1 ? (best.contentH - IMG.head - col.height) / 2 : 0);
-  });
   return best;
 }
 
-/** 回戦の間の線。各卓から1本の縦線へつなぐ。誰がどこから来たかは席の「A卓1位」で示す。 */
-function drawRoundLinks(ctx, columns, theme) {
-  const centers = col => {
-    let y = col.top;
-    return col.blocks.map(block => {
-      const center = y + block.height / 2;
-      y += block.height + IMG.blockGap;
-      return center;
+/** よくある名前の幅(文字の大きさ1pxあたり)。極端に長い名前は別に縮めるので、上位1割は無視する。 */
+function typicalNameEm(ctx) {
+  ctx.font = `bold 100px ${FONT_SANS}`;
+  const widths = state.players.map(name => ctx.measureText(name).width / 100).sort((a, b) => a - b);
+  return Math.max(3, widths[Math.floor((widths.length - 1) * 0.9)]);
+}
+
+/** 決勝中央のトーナメント表を描く。シードは2回戦の席に名前が載るので一覧は出さない。 */
+function drawSides(ctx, shown, x0, y0, W, H, theme) {
+  const headH = 46;
+  const bodyH = H - headH;
+  const top = y0 + headH;
+  const sides = bracketSides(state.rounds, shown);
+  const plan = planSides(state.rounds, sides, W, bodyH, typicalNameEm(ctx));
+  const { cols, colW, seat, head } = plan;
+
+  // 卓は列の高さいっぱいに等間隔で置く
+  cols.forEach(col => {
+    const heights = col.tables.map(t => state.rounds[col.r].tables[t].slots.length * seat + head);
+    const gap = (bodyH - heights.reduce((sum, h) => sum + h, 0)) / col.tables.length;
+    let y = top + gap / 2;
+    col.places = heights.map(h => {
+      const place = { y, h };
+      y += h + gap;
+      return place;
     });
-  };
+  });
+
+  // 回戦の間の線。同じ回戦の列どうし(「2回戦まで」の中央など)はつながない。
   ctx.strokeStyle = theme.onBgMuted;
-  ctx.lineWidth = 2;
-  columns.forEach((col, i) => {
-    const next = columns[i + 1];
-    // 同じ回戦の列どうし(「2回戦まで」の中央など)は線でつながない
+  ctx.lineWidth = 3;
+  cols.forEach((col, i) => {
+    const next = cols[i + 1];
     if (!next || next.r === col.r) return;
-    const from = centers(col), to = centers(next);
-    const barX = next.x - IMG.roundGap / 2;
+    const centers = c => c.places.map(p => p.y + p.h / 2);
+    const barX = (x0 + col.x + colW + x0 + next.x) / 2;
     ctx.beginPath();
-    from.forEach(y => { ctx.moveTo(col.x + IMG.colW, y); ctx.lineTo(barX, y); });
-    to.forEach(y => { ctx.moveTo(barX, y); ctx.lineTo(next.x, y); });
-    ctx.moveTo(barX, Math.min(...from, ...to));
-    ctx.lineTo(barX, Math.max(...from, ...to));
+    centers(col).forEach(y => { ctx.moveTo(x0 + col.x + colW, y); ctx.lineTo(barX, y); });
+    centers(next).forEach(y => { ctx.moveTo(barX, y); ctx.lineTo(x0 + next.x, y); });
+    const all = [...centers(col), ...centers(next)];
+    ctx.moveTo(barX, Math.min(...all));
+    ctx.lineTo(barX, Math.max(...all));
     ctx.stroke();
   });
+
+  // 回戦名は列の組の中央に大きく
+  cols.forEach(col => {
+    if (!col.label) return;
+    const group = cols.filter(c => c.section === col.section);
+    const left = x0 + group[0].x;
+    const width = group[group.length - 1].x + colW - group[0].x;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = theme.onBg;
+    ctx.font = `bold 26px ${FONT_SERIF}`;
+    ctx.fillText(roundName(col.r), left + width / 2, y0 + 18);
+    ctx.textAlign = 'left';
+    ctx.fillStyle = theme.roundLine;
+    ctx.fillRect(left, y0 + 37, width, 3);
+  });
+
+  cols.forEach(col => {
+    col.tables.forEach((t, i) => drawSideTable(ctx, plan, col.r, t, x0 + col.x, col.places[i], theme));
+  });
+}
+
+function drawSideTable(ctx, plan, r, t, x, place, theme) {
+  const { colW: w, seat, head, font, pad } = plan;
+  const table = state.rounds[r].tables[t];
+  const res = state.results[`${r}-${t}`];
+  const isFinal = r === state.rounds.length - 1;
+  const done = res && res.first !== undefined && (isFinal || res.second !== undefined);
+  const headColor = isFinal ? theme.accent : theme.felt;
+
+  ctx.save();
+  roundedRect(ctx, x, place.y, w, place.h, 8);
+  ctx.fillStyle = '#ffffff';
+  ctx.fill();
+  ctx.clip();
+  ctx.textBaseline = 'middle';
+  ctx.fillStyle = headColor;
+  ctx.fillRect(x, place.y, w, head);
+  ctx.fillStyle = '#ffffff';
+  ctx.font = `bold ${Math.max(10, font * 0.85)}px ${FONT_SANS}`;
+  ctx.fillText(isFinal ? '決勝卓' : `${tableLabel(t)}卓`, x + pad, place.y + head / 2);
+  if (table.slots.length === 3) {
+    ctx.textAlign = 'right';
+    ctx.font = `${Math.max(9, font * 0.6)}px ${FONT_SANS}`;
+    ctx.fillText('3人打ち', x + w - pad, place.y + head / 2);
+    ctx.textAlign = 'left';
+  }
+
+  let y = place.y + head;
+  table.slots.forEach((ref, i) => {
+    const center = y + seat / 2;
+    if (i) {
+      ctx.fillStyle = '#d9d3c3';
+      ctx.fillRect(x, y, w, 1);
+    }
+    const id = resolveRef(ref, state.results);
+    const origin = refLabel(ref, r);
+    if (id === null) {
+      ctx.fillStyle = '#6d6a60';
+      drawFitted(ctx, origin, x + pad, center, w - pad * 2, font * 0.9, 9, s => `${s}px ${FONT_SANS}`);
+    } else {
+      const rank = res && res.first === id ? 1 : res && res.second === id ? 2 : 0;
+      if (rank) {
+        ctx.fillStyle = theme.feltSoft;
+        ctx.fillRect(x, y + (i ? 1 : 0), w, seat - (i ? 1 : 0));
+      }
+      // 右端は順位が決まっていれば順位、なければ「シード」「A卓1位」
+      let rightW = 0;
+      if (rank) {
+        ctx.font = `bold ${Math.max(10, font * 0.72)}px ${FONT_SANS}`;
+        const label = `${rank}位`;
+        const pillW = ctx.measureText(label).width + 12;
+        const pillH = Math.min(seat - 4, font * 1.3);
+        roundedRect(ctx, x + w - pad - pillW, center - pillH / 2, pillW, pillH, 5);
+        ctx.fillStyle = headColor;
+        ctx.fill();
+        ctx.fillStyle = '#ffffff';
+        ctx.textAlign = 'center';
+        ctx.fillText(label, x + w - pad - pillW / 2, center);
+        ctx.textAlign = 'left';
+        rightW = pillW + 6;
+      } else if (origin) {
+        ctx.font = `${Math.max(9, font * 0.6)}px ${FONT_SANS}`;
+        rightW = ctx.measureText(origin).width + 6;
+        ctx.fillStyle = '#6d6a60';
+        ctx.textAlign = 'right';
+        ctx.fillText(origin, x + w - pad, center);
+        ctx.textAlign = 'left';
+      }
+      ctx.fillStyle = '#1b1a17';
+      drawFitted(ctx, state.players[id], x + pad, center, w - pad * 2 - rightW, font, 9, s => `bold ${s}px ${FONT_SANS}`);
+    }
+    y += seat;
+  });
+  ctx.restore();
+
+  roundedRect(ctx, x + 0.5, place.y + 0.5, w - 1, place.h - 1, 8);
+  ctx.strokeStyle = done || isFinal ? headColor : '#b9b3a3';
+  ctx.lineWidth = isFinal ? 3 : done ? 2 : 1;
+  ctx.stroke();
 }
 
 function roundedRect(ctx, x, y, w, h, r) {
@@ -1387,26 +1540,9 @@ async function renderImage(target) {
   const finalRes = state.results[`${state.rounds.length - 1}-0`];
   const measure = document.createElement('canvas').getContext('2d');
   const { shown, label: scopeLabel } = exportScope(target);
-  // 左右に分けると列が増えるので、卓を細くして文字を大きくする
-  IMG.colW = shown.length > 1 ? IMG.sidesColW : IMG.gridColW;
-
-  // 回戦ごとに載せるものを用意し、1920×1080に一番大きく入る並べ方を探す
-  const sides = shown.length > 1
-    ? bracketSides(state.rounds, shown)
-    : [{ r: shown[0], tables: [...state.rounds[shown[0]].tables.keys()], byes: state.rounds[shown[0]].byes }];
-  const counted = new Set();
-  const sections = sides.map(({ r, tables, byes }) => {
-    const blocks = tables.map(t => tableBlock(measure, state.rounds[r].tables[t], r, t));
-    blocks.unshift(...byeBlocks(byes, r));
-    // 卓数などの表示は同じ回戦で1回だけ
-    const count = !counted.has(r);
-    counted.add(r);
-    return { r, blocks, count };
-  });
   const bodyY = IMG.margin + IMG.cardH + IMG.cardGap;
   const availW = IMG.w - IMG.margin * 2;
   const availH = IMG.h - bodyY - IMG.margin;
-  const layout = fitLayout(sections, availW, availH);
 
   const canvas = document.createElement('canvas');
   canvas.width = IMG.w;
@@ -1452,7 +1588,7 @@ async function renderImage(target) {
   ctx.fillStyle = '#24231f';
   drawFitted(ctx, d.title || '麻雀トーナメント表', textX, cardCenter - 12, titleW, 30, 14, s => `bold ${s}px ${FONT_SERIF}`);
   ctx.fillStyle = '#6d6a60';
-  ctx.font = `14px ${FONT_SANS}`;
+  ctx.font = `16px ${FONT_SANS}`;
   ctx.fillText(`${state.players.length}人・全${state.rounds.length}回戦${scopeLabel ? `・${scopeLabel}` : ''}`, textX, cardCenter + 20);
   if (champion) {
     const bx = cardRight - championW;
@@ -1463,36 +1599,41 @@ async function renderImage(target) {
     drawFitted(ctx, champion, bx + 14, cardCenter, championW - 28, 18, 11, s => `bold ${s}px ${FONT_SANS}`);
   }
 
-  // 本体は空いた場所の中央に、計算した倍率で描く
-  ctx.save();
-  const scaledW = layout.contentW * layout.scale;
-  const scaledH = layout.contentH * layout.scale;
-  ctx.translate(IMG.margin + (availW - scaledW) / 2, bodyY + (availH - scaledH) / 2);
-  ctx.scale(layout.scale, layout.scale);
-  drawRoundLinks(ctx, layout.columns, theme);
-  layout.columns.forEach(col => {
-    const x = col.x;
-    if (col.label) {
-      ctx.textBaseline = 'middle';
-      ctx.fillStyle = theme.onBg;
-      ctx.font = `bold 16px ${FONT_SERIF}`;
-      ctx.fillText(roundName(col.r), x, 12);
-      const round = state.rounds[col.r];
-      const nameW = ctx.measureText(roundName(col.r)).width;
-      ctx.fillStyle = theme.onBgMuted;
-      ctx.font = `12px ${FONT_SANS}`;
-      if (col.count) ctx.fillText(`${round.tables.length}卓${round.byes.length ? `・シード${round.byes.length}` : ''}`, x + nameW + 8, 13);
-    }
-    ctx.fillStyle = theme.roundLine;
-    ctx.fillRect(x, 28, IMG.colW, 2);
-    let y = col.top;
-    col.blocks.forEach(block => {
-      if (block.kind === 'table') drawTable(ctx, block, x, y, theme);
-      else drawByes(ctx, block, x, y, theme);
-      y += block.height + IMG.blockGap;
+  if (shown.length > 1) {
+    drawSides(ctx, shown, IMG.margin, bodyY, availW, availH, theme);
+  } else {
+    // 1回戦分だけのときは、空いた場所の中央に計算した倍率で描く
+    const r = shown[0];
+    const round = state.rounds[r];
+    const blocks = round.tables.map((table, t) => tableBlock(measure, table, r, t));
+    blocks.unshift(...byeBlocks(round.byes, r));
+    const layout = fitLayout(blocks, availW, availH);
+    ctx.save();
+    const scaledW = layout.contentW * layout.scale;
+    const scaledH = layout.contentH * layout.scale;
+    ctx.translate(IMG.margin + (availW - scaledW) / 2, bodyY + (availH - scaledH) / 2);
+    ctx.scale(layout.scale, layout.scale);
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = theme.onBg;
+    ctx.font = `bold 16px ${FONT_SERIF}`;
+    ctx.fillText(roundName(r), 0, 12);
+    const nameW = ctx.measureText(roundName(r)).width;
+    ctx.fillStyle = theme.onBgMuted;
+    ctx.font = `12px ${FONT_SANS}`;
+    ctx.fillText(`${round.tables.length}卓${round.byes.length ? `・シード${round.byes.length}` : ''}`, nameW + 8, 13);
+    layout.columns.forEach((col, c) => {
+      const x = c * (IMG.colW + IMG.gap);
+      ctx.fillStyle = theme.roundLine;
+      ctx.fillRect(x, 28, IMG.colW, 2);
+      let y = IMG.head;
+      col.forEach(block => {
+        if (block.kind === 'table') drawTable(ctx, block, x, y, theme);
+        else drawByes(ctx, block, x, y, theme);
+        y += block.height + IMG.blockGap;
+      });
     });
-  });
-  ctx.restore();
+    ctx.restore();
+  }
 
   return new Promise((resolve, reject) => {
     canvas.toBlob(blob => (blob ? resolve(blob) : reject(new Error('toBlob failed'))), 'image/png');
