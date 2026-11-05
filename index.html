@@ -150,7 +150,6 @@
   .seat.hl { background: var(--warn-soft); }
   .rank-btn { padding: 1px 7px; font-size: 12px; flex: none; color: var(--muted); }
   .rank-btn[aria-pressed="true"] { background: var(--felt); border-color: var(--felt); color: #fff; font-weight: 700; }
-  .rematch { padding: 4px 10px; font-size: 12px; background: var(--warn-soft); color: var(--warn); border-top: 1px solid var(--line); }
   .byes { margin-bottom: 12px; padding: 8px 10px; background: var(--paper); border: 1px dashed var(--line); border-radius: var(--radius); font-size: 13px; }
   .byes strong { display: block; font-size: 12px; color: var(--accent); }
   .byes ul { display: grid; grid-template-columns: repeat(auto-fill, minmax(90px, 1fr)); gap: 0 8px; margin: 2px 0 0; padding: 0; list-style: none; overflow-wrap: anywhere; }
@@ -667,26 +666,6 @@ function pruneResults(rounds, results) {
   return removed;
 }
 
-/** その時点までに同卓した相手を調べ、卓内の再戦ペアを返す */
-function rematchesInTable(rounds, results, r, t) {
-  const members = rounds[r].tables[t].slots.map(s => resolveRef(s, results));
-  const met = new Set();
-  for (let pr = 0; pr < r; pr++) {
-    rounds[pr].tables.forEach(table => {
-      const ids = table.slots.map(s => resolveRef(s, results)).filter(id => id !== null);
-      ids.forEach(a => ids.forEach(b => { if (a < b) met.add(`${a}-${b}`); }));
-    });
-  }
-  const pairs = [];
-  members.forEach((a, i) => {
-    members.slice(i + 1).forEach(b => {
-      if (a === null || b === null) return;
-      if (met.has(`${Math.min(a, b)}-${Math.max(a, b)}`)) pairs.push([a, b]);
-    });
-  });
-  return pairs;
-}
-
 /* ---------- 配色 ---------- */
 function hexToRgb(hex) {
   const n = parseInt(hex.slice(1), 16);
@@ -977,23 +956,10 @@ function tableHtml(table, r, t) {
   const isFinal = r === state.rounds.length - 1;
   const done = res && res.first !== undefined && (isFinal || res.second !== undefined);
   const sizeNote = table.slots.length === 3 ? '<small>3人打ち</small>' : (ready && !done ? '<small>順位を入力</small>' : '');
-  const warn = tableWarning(table, r, t);
   return `<article class="table ${done ? 'done' : ''}">
     <div class="table-head"><span>${isFinal ? '決勝卓' : `${tableLabel(t)}卓`}</span>${sizeNote}</div>
     ${table.slots.map(s => seatHtml(s, r, t, res, ready)).join('')}
-    ${warn ? `<div class="rematch">${esc(warn)}</div>` : ''}
   </article>`;
-}
-
-/** 卓の再戦表示の文言(画面と画像で共通) */
-function tableWarning(table, r, t) {
-  const ready = table.slots.every(s => resolveRef(s, state.results) !== null);
-  if (ready) {
-    const pairs = rematchesInTable(state.rounds, state.results, r, t);
-    return pairs.length ? `再戦: ${pairs.map(([a, b]) => `${state.players[a]}×${state.players[b]}`).join('、')}` : '';
-  }
-  const same = sameSourcePairs(table);
-  return same.length ? `${same.map(([a]) => `${tableLabel(a.t)}卓`).join('・')}の1位・2位が同卓(組み方の都合で再戦)` : '';
 }
 
 function byeTitle(r) {
@@ -1344,7 +1310,7 @@ designSlot.addEventListener('click', e => {
 /* ---------- 画像保存 ---------- */
 const FONT_SANS = '"Hiragino Kaku Gothic ProN", "Yu Gothic UI", "Yu Gothic", Meiryo, sans-serif';
 const FONT_SERIF = '"Hiragino Mincho ProN", "Yu Mincho", serif';
-const IMG = { w: 1920, h: 1080, margin: 24, cardH: 88, cardGap: 16, gap: 16, blockGap: 12, colW: 256, head: 44, tableHead: 28, seat: 40, warnLine: 17, maxScale: 2, byesPerBlock: 12 };
+const IMG = { w: 1920, h: 1080, margin: 24, cardH: 88, cardGap: 16, gap: 16, blockGap: 12, colW: 256, head: 44, tableHead: 28, seat: 40, maxScale: 2, byesPerBlock: 12 };
 
 /** 高さlimitに収まるようにブロックを列へ詰める */
 function packColumns(blocks, limit) {
@@ -1535,22 +1501,6 @@ function roundedRect(ctx, x, y, w, h, r) {
   ctx.closePath();
 }
 
-/** 1文字ずつ測って折り返す(日本語は単語の区切りがないため) */
-function wrapText(ctx, text, maxW) {
-  const lines = [];
-  let line = '';
-  for (const ch of text) {
-    if (line && ctx.measureText(line + ch).width > maxW) {
-      lines.push(line);
-      line = ch;
-    } else {
-      line += ch;
-    }
-  }
-  if (line) lines.push(line);
-  return lines;
-}
-
 /** 幅に収まるよう文字を縮め、それでも長ければ末尾を省略して描く */
 function drawFitted(ctx, text, x, y, maxW, size, minSize, font) {
   let s = size;
@@ -1567,12 +1517,8 @@ function drawFitted(ctx, text, x, y, maxW, size, minSize, font) {
   ctx.fillText(out, x, y);
 }
 
-function tableBlock(ctx, table, r, t) {
-  ctx.font = `12px ${FONT_SANS}`;
-  const warn = tableWarning(table, r, t);
-  const warnLines = warn ? wrapText(ctx, warn, IMG.colW - 20) : [];
-  const height = IMG.tableHead + table.slots.length * IMG.seat + (warnLines.length ? warnLines.length * IMG.warnLine + 8 : 0);
-  return { kind: 'table', table, r, t, warnLines, height };
+function tableBlock(table, r, t) {
+  return { kind: 'table', table, r, t, height: IMG.tableHead + table.slots.length * IMG.seat };
 }
 /** シードの一覧。人数が多いときは列をまたげるよう分割する。 */
 function byeBlocks(byes, r) {
@@ -1589,7 +1535,7 @@ function byeBlocks(byes, r) {
 }
 
 function drawTable(ctx, block, x, y, theme) {
-  const { table, r, t, warnLines, height } = block;
+  const { table, r, t, height } = block;
   const w = IMG.colW;
   const key = `${r}-${t}`;
   const res = state.results[key];
@@ -1649,13 +1595,6 @@ function drawTable(ctx, block, x, y, theme) {
     sy += IMG.seat;
   });
 
-  if (warnLines.length) {
-    ctx.fillStyle = '#fbf0d4';
-    ctx.fillRect(x, sy, w, height - (sy - y));
-    ctx.fillStyle = '#8a5a00';
-    ctx.font = `12px ${FONT_SANS}`;
-    warnLines.forEach((line, i) => ctx.fillText(line, x + 10, sy + 4 + IMG.warnLine * (i + 0.5)));
-  }
   ctx.restore();
 
   roundedRect(ctx, x + 0.5, y + 0.5, w - 1, height - 1, 8);
@@ -1710,7 +1649,6 @@ async function renderImage(target) {
   const theme = themeFrom(state.design);
   const d = state.design;
   const finalRes = state.results[`${state.rounds.length - 1}-0`];
-  const measure = document.createElement('canvas').getContext('2d');
   const { shown, label: scopeLabel } = exportScope(target);
   const bodyY = IMG.margin + IMG.cardH + IMG.cardGap;
   const availW = IMG.w - IMG.margin * 2;
@@ -1777,7 +1715,7 @@ async function renderImage(target) {
     // 1回戦分だけのときは、空いた場所の中央に計算した倍率で描く
     const r = shown[0];
     const round = state.rounds[r];
-    const blocks = round.tables.map((table, t) => tableBlock(measure, table, r, t));
+    const blocks = round.tables.map((table, t) => tableBlock(table, r, t));
     blocks.unshift(...byeBlocks(round.byes, r));
     const layout = fitLayout(blocks, availW, availH);
     ctx.save();
