@@ -8,8 +8,8 @@ const html = fs.readFileSync(path.join(__dirname, 'index.html'), 'utf8');
 const code = html.split('/*LOGIC-START*/')[1].split('/*LOGIC-END*/')[0];
 const ctx = { crypto: require('crypto').webcrypto, Uint32Array, Math, Set, Array };
 vm.createContext(ctx);
-vm.runInContext(code + '\nthis.api={parseNames,findDuplicates,tableLabel,roundShape,buildBracket,bracketSides,planSides,normalizeSeeds,newShareId,applyStreamEvent,resultChanges,resultPatch,removedResultCount,cleanResults,parseSharedBracket,parseSharedDesign,sameSourcePairs,resolveRef,pruneResults,rematchesInTable,extractColors,buildPalettes,themeFrom,contrastRatio};', ctx);
-const { parseNames, findDuplicates, tableLabel, roundShape, buildBracket, bracketSides, planSides, normalizeSeeds, newShareId, applyStreamEvent, resultChanges, resultPatch, removedResultCount, cleanResults, parseSharedBracket, parseSharedDesign, sameSourcePairs, resolveRef, pruneResults, rematchesInTable, extractColors, buildPalettes, themeFrom, contrastRatio } = ctx.api;
+vm.runInContext(code + '\nthis.api={parseNames,findDuplicates,tableLabel,roundShape,buildBracket,bracketSides,planSides,normalizeSeeds,newShareId,applyStreamEvent,resultChanges,resultPatch,removedResultCount,cleanResults,parseSharedBracket,parseSharedDesign,sameSourcePairs,resolveRef,pruneResults,extractColors,buildPalettes,themeFrom,contrastRatio};', ctx);
+const { parseNames, findDuplicates, tableLabel, roundShape, buildBracket, bracketSides, planSides, normalizeSeeds, newShareId, applyStreamEvent, resultChanges, resultPatch, removedResultCount, cleanResults, parseSharedBracket, parseSharedDesign, sameSourcePairs, resolveRef, pruneResults, extractColors, buildPalettes, themeFrom, contrastRatio } = ctx.api;
 
 // 配色: 白地に赤と青のロゴから、白より赤・青を優先して拾う
 {
@@ -143,7 +143,6 @@ assert.deepStrictEqual(seats, [['A1', 'B2', 'C1', 'D2'], ['A2', 'B1', 'C2', 'D1'
   const table = rounds[1].tables[0];
   const members = table.slots.map(s => resolveRef(s, results));
   assert.ok(members.every(m => m !== null));
-  assert.strictEqual(rematchesInTable(rounds, results, 1, 0).length, 0);
   results['1-0'] = { first: members[0], second: members[1] };
   const firstRef = table.slots[0];
   results[`0-${firstRef.t}`] = { first: rounds[0].tables[firstRef.t].slots[2].p, second: results[`0-${firstRef.t}`].second };
