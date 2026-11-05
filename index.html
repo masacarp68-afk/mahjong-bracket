@@ -87,6 +87,12 @@
   .count { font-weight: 700; color: var(--on-bg); }
   .preview { color: var(--on-bg-muted); font-size: 13px; }
   .notice { margin-top: 12px; padding: 8px 12px; border-radius: 6px; font-size: 13px; background: var(--warn-soft); color: var(--warn); }
+  .seed-picker { margin-top: 14px; padding: 12px; background: var(--paper); border: 1px solid var(--line); border-radius: var(--radius); }
+  .seed-head { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 12px; font-size: 14px; font-weight: 700; color: var(--ink); }
+  .seed-head span { font-weight: 400; color: var(--muted); }
+  .seed-note { margin: 2px 0 10px; font-size: 12px; color: var(--muted); }
+  .seed-list { display: flex; flex-wrap: wrap; gap: 6px; max-height: 260px; overflow-y: auto; padding: 2px; }
+  .chip:disabled { color: var(--muted); background: transparent; border-color: var(--line); cursor: not-allowed; }
 
   /* トーナメント表 */
   .banner {
@@ -144,7 +150,7 @@
   .rematch { padding: 4px 10px; font-size: 12px; background: var(--warn-soft); color: var(--warn); border-top: 1px solid var(--line); }
   .byes { margin-bottom: 12px; padding: 8px 10px; background: var(--paper); border: 1px dashed var(--line); border-radius: var(--radius); font-size: 13px; }
   .byes strong { display: block; font-size: 12px; color: var(--accent); }
-  .byes ul { margin: 2px 0 0; padding: 0; list-style: none; }
+  .byes ul { display: grid; grid-template-columns: repeat(auto-fill, minmax(90px, 1fr)); gap: 0 8px; margin: 2px 0 0; padding: 0; list-style: none; overflow-wrap: anywhere; }
   .byes li[data-player] { cursor: default; }
   .byes li.hl { background: var(--warn-soft); }
   .help { margin-top: 12px; font-size: 13px; color: var(--on-bg-muted); }
@@ -234,13 +240,26 @@ function tableLabel(i) {
   return s;
 }
 
-/** K人の回の卓構成。端数1〜2人はシード、3人は3人打ち卓。4人以下は決勝。 */
+/**
+ * K人の回の卓構成。4人以下は決勝。
+ * 次の回が 4・8・16・32・64… になるよう、必要な卓だけ打ち、残りをシードにする。
+ * 4人卓は2人、3人卓は1人減らせるので、減らす人数が奇数なら3人卓を1つ入れる。
+ */
 function roundShape(k) {
   if (k <= 4) return { sizes: [k], byes: 0 };
-  const sizes = new Array(Math.floor(k / 4)).fill(4);
-  const r = k % 4;
-  if (r === 3) { sizes.push(3); return { sizes, byes: 0 }; }
-  return { sizes, byes: r };
+  let field = 4;
+  while (field * 2 <= k) field *= 2;
+  if (field === k) return { sizes: new Array(k / 4).fill(4), byes: 0 };
+  const reduce = k - field;
+  const sizes = new Array(Math.floor(reduce / 2)).fill(4);
+  if (reduce % 2) sizes.push(3);
+  const seated = sizes.reduce((sum, size) => sum + size, 0);
+  return { sizes, byes: k - seated };
+}
+
+/** シード指定を今の参加者に合わせて整理する。いない人・重複・枠を超えた分を外す。 */
+function normalizeSeeds(names, seeds, slots) {
+  return [...new Set(seeds)].filter(name => names.includes(name)).slice(0, slots);
 }
 
 function overlapCount(a, b) {
@@ -250,8 +269,9 @@ function overlapCount(a, b) {
 }
 
 function groupScore(members) {
-  let score = 0, firsts = 0, seconds = 0;
+  let score = 0, firsts = 0, seconds = 0, seeds = 0;
   for (let i = 0; i < members.length; i++) {
+    if (members[i].rank === 0) seeds++;
     if (members[i].rank === 1) firsts++;
     if (members[i].rank === 2) seconds++;
     for (let j = i + 1; j < members.length; j++) {
@@ -259,20 +279,8 @@ function groupScore(members) {
       else score += overlapCount(members[i], members[j]) * 10; // 再戦の可能性
     }
   }
-  return score + Math.abs(firsts - seconds) * 3;
-}
-
-function byeScore(members) {
-  let score = 0;
-  const lasts = new Set();
-  members.forEach(m => {
-    if (m.byes > 0) score += 200; // 同じ枠が2回続けてシードにならないように
-    if (m.last) {
-      if (lasts.has(m.last)) score += 500;
-      lasts.add(m.last);
-    }
-  });
-  return score;
+  // 2乗で数えて、シードと勝ち上がりが卓ごとに偏らないようにする
+  return score + Math.abs(firsts - seconds) * 3 + seeds * seeds * 4;
 }
 
 /** 1回戦の卓が偶数で端数なしのときの基本形: A1・C1・B2・D2 / B1・D1・A2・C2 */
@@ -293,19 +301,14 @@ function isCleanCross(slots) {
   if (k % 4 !== 0) return false;
   const firsts = slots.filter(s => s.rank === 1).length;
   const seconds = slots.filter(s => s.rank === 2).length;
-  return firsts === k / 2 && seconds === k / 2 && slots.every(s => s.byes === 0);
+  return firsts === k / 2 && seconds === k / 2;
 }
 
-/** 山登りで1回戦分の席を決める */
+/** 山登りで1回戦分の席を決める。2回戦以降は人数が 8・16・32… なので全員が卓に入る。 */
 function searchRound(slots, rng) {
-  const { sizes, byes } = roundShape(slots.length);
-  const order = shuffled(slots, rng);
-  // シードは未シードの枠を優先。残りを空いている中で最も点の低い卓へ。
-  const pool = order.slice().sort((a, b) => a.byes - b.byes);
-  const byeList = pool.slice(0, byes);
-  const rest = order.filter(s => !byeList.includes(s));
+  const { sizes } = roundShape(slots.length);
   const groups = sizes.map(() => []);
-  rest.forEach(slot => {
+  shuffled(slots, rng).forEach(slot => {
     let best = -1, bestDelta = Infinity;
     groups.forEach((g, i) => {
       if (g.length >= sizes[i]) return;
@@ -315,41 +318,41 @@ function searchRound(slots, rng) {
     groups[best].push(slot);
   });
 
-  const bins = groups.concat([byeList]);
-  const binScore = i => (i === groups.length ? byeScore(bins[i]) : groupScore(bins[i]));
   let improved = true;
   while (improved) {
     improved = false;
-    for (let a = 0; a < bins.length; a++) {
-      for (let b = a + 1; b < bins.length; b++) {
-        for (let i = 0; i < bins[a].length; i++) {
-          for (let j = 0; j < bins[b].length; j++) {
-            const before = binScore(a) + binScore(b);
-            [bins[a][i], bins[b][j]] = [bins[b][j], bins[a][i]];
-            if (binScore(a) + binScore(b) < before) improved = true;
-            else [bins[a][i], bins[b][j]] = [bins[b][j], bins[a][i]];
+    for (let a = 0; a < groups.length; a++) {
+      for (let b = a + 1; b < groups.length; b++) {
+        for (let i = 0; i < groups[a].length; i++) {
+          for (let j = 0; j < groups[b].length; j++) {
+            const before = groupScore(groups[a]) + groupScore(groups[b]);
+            [groups[a][i], groups[b][j]] = [groups[b][j], groups[a][i]];
+            if (groupScore(groups[a]) + groupScore(groups[b]) < before) improved = true;
+            else [groups[a][i], groups[b][j]] = [groups[b][j], groups[a][i]];
           }
         }
       }
     }
   }
-  return { groups, byeList };
+  return groups;
 }
 
-function buildOnce(n, rng) {
-  const order = shuffled([...Array(n).keys()], rng);
+function buildOnce(n, seeds, rng) {
+  const first = roundShape(n);
+  // 指定されたシードを後ろに置く。後ろから順にシード枠になり、余った枠は抽選で埋まる。
+  const chosen = seeds.slice(0, first.byes);
+  const order = shuffled([...Array(n).keys()].filter(p => !chosen.includes(p)), rng).concat(chosen);
   const rounds = [];
   let total = 0;
 
   // 1回戦: 抽選順にそのまま座る。余りがシード。
-  const first = roundShape(n);
   let cursor = 0;
   let current = first.sizes.map(size => {
-    const seated = order.slice(cursor, cursor + size).map(p => ({ ref: { p }, last: null, anc: new Set(), rank: 0, byes: 0 }));
+    const seated = order.slice(cursor, cursor + size).map(p => ({ ref: { p }, last: null, anc: new Set(), rank: 0 }));
     cursor += size;
     return seated;
   });
-  let byeList = order.slice(cursor).map(p => ({ ref: { p }, last: null, anc: new Set(), rank: 0, byes: 0 }));
+  let byeList = order.slice(cursor).map(p => ({ ref: { p }, last: null, anc: new Set(), rank: 0 }));
 
   for (let r = 0; ; r++) {
     rounds.push({
@@ -364,37 +367,32 @@ function buildOnce(n, rng) {
       const anc = new Set([`${r}-${t}`]);
       group.forEach(s => s.anc.forEach(x => anc.add(x)));
       next.push(
-        { ref: { r, t, rank: 1 }, last: `${r}-${t}`, anc, rank: 1, byes: 0 },
-        { ref: { r, t, rank: 2 }, last: `${r}-${t}`, anc, rank: 2, byes: 0 }
+        { ref: { r, t, rank: 1 }, last: `${r}-${t}`, anc, rank: 1 },
+        { ref: { r, t, rank: 2 }, last: `${r}-${t}`, anc, rank: 2 }
       );
     });
-    byeList.forEach(s => next.push({ ...s, byes: s.byes + 1 }));
+    byeList.forEach(s => next.push(s));
+    byeList = [];
 
-    if (r === 0 && isCleanCross(next)) {
-      current = crossTables(next);
-      byeList = [];
-    } else if (next.length <= 4) {
-      current = [next];
-      byeList = [];
-    } else {
-      const found = searchRound(next, rng);
-      current = found.groups;
-      byeList = found.byeList;
-    }
+    if (r === 0 && isCleanCross(next)) current = crossTables(next);
+    else if (next.length <= 4) current = [next];
+    else current = searchRound(next, rng);
     current.forEach(g => { total += groupScore(g); });
-    total += byeScore(byeList);
   }
   return { rounds, total };
 }
 
-/** 全回戦の枠を作る。何通りも試して、再戦が一番少ない表を採用する。 */
-function buildBracket(n, rng, trials) {
+/**
+ * 全回戦の枠を作る。何通りも試して、再戦が一番少ない表を採用する。
+ * seedsは必ずシードにする参加者の番号(枠より多い分は無視)。
+ */
+function buildBracket(n, seeds = [], rng, trials) {
   if (n < 4) throw new Error('参加者は4人以上必要です');
   const random = rng || secureRandom;
   const count = trials || (n > 32 ? 60 : 200);
   let best = null;
   for (let i = 0; i < count; i++) {
-    const candidate = buildOnce(n, random);
+    const candidate = buildOnce(n, seeds, random);
     if (!best || candidate.total < best.total) best = candidate;
   }
   return best.rounds;
@@ -571,7 +569,7 @@ const PATTERNS = [['gradient', 'グラデーション'], ['stripe', '斜めス�
 function defaultDesign() {
   return { title: '', logo: null, main: null, accent: null, deep: false, pattern: 'gradient', palettes: [] };
 }
-let state = { draft: '', players: null, rounds: null, results: {}, design: defaultDesign() };
+let state = { draft: '', seeds: [], players: null, rounds: null, results: {}, design: defaultDesign() };
 let notice = '';
 let confirmingReset = false;
 let designOpen = false;
@@ -590,7 +588,7 @@ function load() {
     const saved = JSON.parse(localStorage.getItem(STORAGE_KEY));
     if (saved && saved.version === SCHEMA_VERSION) {
       state = {
-        draft: saved.draft || '', players: saved.players || null, rounds: saved.rounds || null, results: saved.results || {},
+        draft: saved.draft || '', seeds: saved.seeds || [], players: saved.players || null, rounds: saved.rounds || null, results: saved.results || {},
         design: { ...defaultDesign(), ...(saved.design || {}) },
       };
     }
@@ -603,7 +601,7 @@ function roundName(r) {
   return r === state.rounds.length - 1 ? '決勝' : `${r + 1}回戦`;
 }
 function refLabel(ref, currentRound) {
-  if (ref.p !== undefined) return '';
+  if (ref.p !== undefined) return currentRound > 0 ? 'シード' : '';
   const place = `${tableLabel(ref.t)}卓${ref.rank}位`;
   return ref.r === currentRound - 1 ? place : `${ref.r + 1}回戦${place}`;
 }
@@ -621,8 +619,41 @@ function renderSetup() {
         <span class="count" id="count"></span>
         <span class="preview" id="preview"></span>
       </div>
+      <div id="seed-picker"></div>
+      <div id="seed-notice"></div>
       <div id="dups"></div>
     </section>`;
+  let seedNotice = '';
+  const slotCount = names => (names.length >= 4 ? roundShape(names.length).byes : 0);
+  // 枠が減って外れた人だけお知らせする(名前を消した場合は見ればわかる)
+  const syncSeeds = names => {
+    const present = normalizeSeeds(names, state.seeds, Infinity);
+    const kept = normalizeSeeds(names, state.seeds, slotCount(names));
+    seedNotice = kept.length < present.length
+      ? `シードの枠が減ったので、${present.slice(kept.length).join('、')}の指定を外しました。`
+      : '';
+    state.seeds = kept;
+  };
+  const renderSeedPicker = names => {
+    const slots = slotCount(names);
+    const picker = document.getElementById('seed-picker');
+    document.getElementById('seed-notice').innerHTML = seedNotice ? `<div class="notice">${esc(seedNotice)}</div>` : '';
+    if (!slots) {
+      picker.innerHTML = '';
+      return;
+    }
+    const full = state.seeds.length >= slots;
+    const chips = [...new Set(names)].map((name, i) => {
+      const on = state.seeds.includes(name);
+      return `<button type="button" class="chip" data-seed="${i}" aria-pressed="${on}" ${full && !on ? 'disabled' : ''}>${esc(name)}</button>`;
+    }).join('');
+    picker.innerHTML = `
+      <div class="seed-picker">
+        <div class="seed-head">2回戦から出場するシードを指定(任意)<span>${state.seeds.length}/${slots}人を選択</span></div>
+        <p class="seed-note">選ばなかった枠は抽選で決まります。</p>
+        <div class="seed-list">${chips}</div>
+      </div>`;
+  };
   // 日本語変換を途切れさせないよう、入力欄は作り直さず周りの表示だけ更新する
   const updateSummary = () => {
     const names = parseNames(state.draft);
@@ -631,8 +662,8 @@ function renderSetup() {
     if (names.length >= 4) {
       const s = roundShape(names.length);
       const parts = [`1回戦 ${s.sizes.length}卓`];
-      if (s.byes) parts.push(`シード${s.byes}人`);
       if (s.sizes.includes(3)) parts.push('うち1卓は3人打ち');
+      if (s.byes) parts.push(`シード${s.byes}人`);
       preview = parts.join('・');
     } else if (names.length) {
       preview = '4人以上で抽選できます';
@@ -643,18 +674,33 @@ function renderSetup() {
     document.getElementById('dups').innerHTML = dups.length
       ? `<div class="notice">同じ名前があります: ${esc(dups.join('、'))}。別人なら区別できる名前に直すのがおすすめです(このままでも抽選できます)。</div>`
       : '';
+    renderSeedPicker(names);
   };
+  syncSeeds(parseNames(state.draft));
   updateSummary();
   const area = document.getElementById('names');
   area.addEventListener('input', () => {
     state.draft = area.value;
+    syncSeeds(parseNames(state.draft));
     save();
     updateSummary();
+  });
+  document.getElementById('seed-picker').addEventListener('click', e => {
+    const chip = e.target.closest('[data-seed]');
+    if (!chip) return;
+    const names = parseNames(state.draft);
+    const name = [...new Set(names)][Number(chip.dataset.seed)];
+    state.seeds = state.seeds.includes(name) ? state.seeds.filter(s => s !== name) : state.seeds.concat(name);
+    seedNotice = '';
+    save();
+    renderSeedPicker(names);
+    // 作り直したボタンにフォーカスを戻す(キーボードで続けて選べるように)
+    document.querySelector(`[data-seed="${chip.dataset.seed}"]`).focus();
   });
   document.getElementById('draw').addEventListener('click', () => {
     const list = parseNames(state.draft);
     state.players = list;
-    state.rounds = buildBracket(list.length);
+    state.rounds = buildBracket(list.length, state.seeds.map(name => list.indexOf(name)));
     state.results = {};
     notice = '';
     save();
@@ -706,6 +752,10 @@ function tableWarning(table, r, t) {
   return same.length ? `${same.map(([a]) => `${tableLabel(a.t)}卓`).join('・')}の1位・2位が同卓(組み方の都合で再戦)` : '';
 }
 
+function byeTitle(r) {
+  return `シード(${r + 2}回戦から出場)`;
+}
+
 function byesHtml(round, r) {
   if (!round.byes.length) return '';
   const items = round.byes.map(ref => {
@@ -713,7 +763,7 @@ function byesHtml(round, r) {
     const name = id === null ? refLabel(ref, r) : state.players[id];
     return `<li ${id === null ? '' : `data-player="${id}"`}>${esc(name)}</li>`;
   }).join('');
-  return `<div class="byes"><strong>シード(この回は免除)</strong><ul>${items}</ul></div>`;
+  return `<div class="byes"><strong>${esc(byeTitle(r))}</strong><ul>${items}</ul></div>`;
 }
 
 function renderBracket() {
@@ -990,7 +1040,7 @@ designSlot.addEventListener('click', e => {
 /* ---------- 画像保存 ---------- */
 const FONT_SANS = '"Hiragino Kaku Gothic ProN", "Yu Gothic UI", "Yu Gothic", Meiryo, sans-serif';
 const FONT_SERIF = '"Hiragino Mincho ProN", "Yu Mincho", serif';
-const IMG = { w: 1920, h: 1080, margin: 24, cardH: 88, cardGap: 16, gap: 16, blockGap: 12, colW: 256, head: 44, tableHead: 28, seat: 40, warnLine: 17, maxScale: 2 };
+const IMG = { w: 1920, h: 1080, margin: 24, cardH: 88, cardGap: 16, gap: 16, blockGap: 12, colW: 256, head: 44, tableHead: 28, seat: 40, warnLine: 17, maxScale: 2, byesPerBlock: 12 };
 
 /** 高さlimitに収まるようにブロックを列へ詰める */
 function packColumns(blocks, limit) {
@@ -1078,12 +1128,18 @@ function tableBlock(ctx, table, r, t) {
   const height = IMG.tableHead + table.slots.length * IMG.seat + (warnLines.length ? warnLines.length * IMG.warnLine + 8 : 0);
   return { kind: 'table', table, r, t, warnLines, height };
 }
-function byeBlock(ctx, round, r) {
+/** シードの一覧。人数が多いときは列をまたげるよう分割する。 */
+function byeBlocks(round, r) {
   const names = round.byes.map(ref => {
     const id = resolveRef(ref, state.results);
     return id === null ? refLabel(ref, r) : state.players[id];
   });
-  return { kind: 'byes', names, height: 30 + names.length * 20 };
+  const blocks = [];
+  for (let i = 0; i < names.length; i += IMG.byesPerBlock) {
+    const part = names.slice(i, i + IMG.byesPerBlock);
+    blocks.push({ kind: 'byes', r, names: part, height: 30 + part.length * 20 });
+  }
+  return blocks;
 }
 
 function drawTable(ctx, block, x, y, theme) {
@@ -1173,7 +1229,7 @@ function drawByes(ctx, block, x, y, theme) {
   ctx.textBaseline = 'middle';
   ctx.fillStyle = theme.accent;
   ctx.font = `bold 12px ${FONT_SANS}`;
-  ctx.fillText('シード(この回は免除)', x + 10, y + 16);
+  ctx.fillText(byeTitle(block.r), x + 10, y + 16);
   ctx.fillStyle = '#24231f';
   block.names.forEach((name, i) => {
     drawFitted(ctx, name, x + 10, y + 36 + i * 20, IMG.colW - 20, 13, 10, s => `${s}px ${FONT_SANS}`);
@@ -1209,7 +1265,7 @@ async function renderImage(target) {
   const sections = shown.map(r => {
     const round = state.rounds[r];
     const blocks = round.tables.map((table, t) => tableBlock(measure, table, r, t));
-    if (round.byes.length) blocks.unshift(byeBlock(measure, round, r));
+    blocks.unshift(...byeBlocks(round, r));
     return { r, blocks };
   });
   const bodyY = IMG.margin + IMG.cardH + IMG.cardGap;
