@@ -8,8 +8,8 @@ const html = fs.readFileSync(path.join(__dirname, 'index.html'), 'utf8');
 const code = html.split('/*LOGIC-START*/')[1].split('/*LOGIC-END*/')[0];
 const ctx = { crypto: require('crypto').webcrypto, Uint32Array, Math, Set, Array };
 vm.createContext(ctx);
-vm.runInContext(code + '\nthis.api={parseNames,findDuplicates,tableLabel,roundShape,buildBracket,bracketSides,normalizeSeeds,sameSourcePairs,resolveRef,pruneResults,rematchesInTable,extractColors,buildPalettes,themeFrom,contrastRatio};', ctx);
-const { parseNames, findDuplicates, tableLabel, roundShape, buildBracket, bracketSides, normalizeSeeds, sameSourcePairs, resolveRef, pruneResults, rematchesInTable, extractColors, buildPalettes, themeFrom, contrastRatio } = ctx.api;
+vm.runInContext(code + '\nthis.api={parseNames,findDuplicates,tableLabel,roundShape,buildBracket,bracketSides,planSides,normalizeSeeds,sameSourcePairs,resolveRef,pruneResults,rematchesInTable,extractColors,buildPalettes,themeFrom,contrastRatio};', ctx);
+const { parseNames, findDuplicates, tableLabel, roundShape, buildBracket, bracketSides, planSides, normalizeSeeds, sameSourcePairs, resolveRef, pruneResults, rematchesInTable, extractColors, buildPalettes, themeFrom, contrastRatio } = ctx.api;
 
 // 配色: 白地に赤と青のロゴから、白より赤・青を優先して拾う
 {
@@ -208,6 +208,28 @@ for (const n of [16, 40, 64]) {
       const tables = Array.from(mine).flatMap(s => Array.from(s.tables)).sort((a, b) => a - b);
       assert.deepStrictEqual(Array.from(tables), Array.from(round.tables.keys()), `n=${n} r=${r} 卓の過不足`);
       assert.strictEqual(mine.reduce((sum, s) => sum + s.byes.length, 0), round.byes.length, `n=${n} r=${r} シードの過不足`);
+    });
+  }
+}
+
+// 全体画像の布置: 領域に収まり、全部の卓が1回ずつ載り、人数ごとに十分な文字の大きさになる
+{
+  const W = 1872, H = 860, nameEm = 4;
+  const minFont = { 8: 30, 16: 30, 32: 24, 40: 18, 64: 15 };
+  for (const [n, min] of Object.entries(minFont)) {
+    const rounds = buildBracket(Number(n), [], undefined, 2);
+    const plan = planSides(rounds, bracketSides(rounds, rounds.map((_, r) => r)), W, H, nameEm);
+    assert.ok(plan.font >= min, `n=${n} 文字${plan.font}px`);
+    const last = plan.cols[plan.cols.length - 1];
+    assert.ok(last.x + plan.colW <= W + 0.01, `n=${n} 横にはみ出す`);
+    plan.cols.forEach(col => {
+      const seats = col.tables.reduce((sum, t) => sum + rounds[col.r].tables[t].slots.length, 0);
+      const used = seats * plan.seat + col.tables.length * plan.head + (col.tables.length - 1) * plan.tableGap;
+      assert.ok(used <= H + 0.01, `n=${n} 縦にはみ出す`);
+    });
+    rounds.forEach((round, r) => {
+      const placed = Array.from(plan.cols).filter(c => c.r === r).flatMap(c => Array.from(c.tables)).sort((a, b) => a - b);
+      assert.deepStrictEqual(Array.from(placed), Array.from(round.tables.keys()), `n=${n} r=${r} 卓の過不足`);
     });
   }
 }
