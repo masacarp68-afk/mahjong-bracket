@@ -95,14 +95,52 @@
   .chip:disabled { color: var(--muted); background: transparent; border-color: var(--line); cursor: not-allowed; }
 
   /* トーナメント表 */
-  .banner {
+  .champion {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px 20px;
     margin-bottom: 16px;
-    padding: 10px 16px;
-    background: var(--accent-soft);
-    border-left: 4px solid var(--accent);
-    border-radius: 4px;
-    font-weight: 700;
+    padding: 16px 20px;
+    background: var(--paper);
+    border: 2px solid var(--accent);
+    border-radius: var(--radius);
+    color: var(--ink);
   }
+  .champion-label { padding: 4px 14px; border-radius: 6px; background: var(--accent); color: #fff; font-size: 18px; font-weight: 700; }
+  .champion-name { min-width: 0; font-family: "Hiragino Mincho ProN", "Yu Mincho", serif; font-size: clamp(30px, 6vw, 56px); line-height: 1.2; overflow-wrap: anywhere; }
+  .champion-second { color: var(--muted); font-size: 16px; }
+  .champion button { margin-left: auto; font-weight: 700; }
+
+  /* 優勝者の全画面表示 */
+  .champion-screen {
+    position: fixed;
+    inset: 0;
+    z-index: 100;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 4vmin;
+    cursor: pointer;
+  }
+  .champion-card {
+    box-sizing: border-box;
+    width: min(92vw, 1500px);
+    max-height: 92vh;
+    padding: 5vmin 4vmin;
+    overflow: hidden;
+    background: var(--paper);
+    border: 4px solid var(--accent);
+    border-radius: 16px;
+    color: var(--ink);
+    text-align: center;
+  }
+  .champion-card img { display: block; max-width: 40%; max-height: 18vh; margin: 0 auto 2vmin; object-fit: contain; }
+  .champion-card-title { margin: 0 0 3vmin; font-family: "Hiragino Mincho ProN", "Yu Mincho", serif; font-size: clamp(20px, 4vmin, 48px); font-weight: 700; overflow-wrap: anywhere; }
+  .champion-card-label { display: inline-block; padding: .1em .8em; border-radius: 10px; background: var(--accent); color: #fff; font-size: clamp(24px, 6vmin, 72px); font-weight: 700; }
+  .champion-card-name { margin: 2vmin 0 3vmin; font-family: "Hiragino Mincho ProN", "Yu Mincho", serif; font-size: 18vmin; font-weight: 700; line-height: 1.15; white-space: nowrap; }
+  .champion-card-second { margin: 0; color: var(--muted); font-size: clamp(18px, 4vmin, 48px); overflow-wrap: anywhere; }
+  .champion-card-hint { margin: 2vmin 0 0; color: var(--muted); font-size: 14px; }
   .bracket { position: relative; display: flex; gap: 40px; overflow-x: auto; padding-bottom: 12px; align-items: stretch; }
   .round { position: relative; z-index: 1; flex: 0 0 256px; display: flex; flex-direction: column; }
   .round-body { flex: 1; display: flex; flex-direction: column; justify-content: center; }
@@ -997,8 +1035,7 @@ function renderBracket() {
     save();
     render();
   });
-  const finalRes = state.results[`${state.rounds.length - 1}-0`];
-  const champion = finalRes && finalRes.first !== undefined ? finalRes.first : null;
+  const champion = championInfo();
   const sides = bracketSides(state.rounds, state.rounds.map((_, r) => r));
   // 他の人の入力で作り直しても、横スクロールの位置を保つ
   const previous = app.querySelector('.bracket');
@@ -1011,7 +1048,13 @@ function renderBracket() {
     return `<span>${round.tables.length}卓${round.byes.length ? `・シード${round.byes.length}` : ''}</span>`;
   };
   app.innerHTML = `
-    ${champion !== null ? `<div class="banner">優勝: ${esc(state.players[champion])}${finalRes.second !== undefined ? ` / 準優勝: ${esc(state.players[finalRes.second])}` : ''}</div>` : ''}
+    ${champion ? `
+      <section class="champion">
+        <span class="champion-label">優勝</span>
+        <strong class="champion-name">${esc(champion.first)}</strong>
+        ${champion.second !== null ? `<span class="champion-second">準優勝: ${esc(champion.second)}</span>` : ''}
+        <button id="champion-open">全画面で出す</button>
+      </section>` : ''}
     ${notice ? `<div class="notice" style="margin:0 0 12px">${esc(notice)}</div>` : ''}
     <div class="bracket">
       ${sides.map(({ r, tables, byes }) => `
@@ -1062,10 +1105,112 @@ function drawScreenLinks() {
   bracket.prepend(svg);
 }
 
+/** 決勝の結果。優勝者が決まっていなければnull。 */
+function championInfo() {
+  if (!state.rounds) return null;
+  const res = state.results[`${state.rounds.length - 1}-0`];
+  if (!res || res.first === undefined) return null;
+  return {
+    first: state.players[res.first],
+    second: res.second === undefined ? null : state.players[res.second],
+  };
+}
+
+let championOpen = false;
+let championFullscreen = false;
+
+/** 優勝者の全画面表示を今の内容に合わせる。優勝が取り消されたら閉じる。 */
+function renderChampionScreen() {
+  const info = championInfo();
+  let screen = document.getElementById('champion-screen');
+  if (!championOpen || !info) {
+    championOpen = false;
+    if (screen) closeChampionScreen();
+    return;
+  }
+  if (!screen) {
+    screen = document.createElement('div');
+    screen.id = 'champion-screen';
+    screen.className = 'champion-screen';
+    screen.setAttribute('role', 'dialog');
+    screen.setAttribute('aria-modal', 'true');
+    screen.setAttribute('aria-label', '優勝者');
+    document.body.appendChild(screen);
+  }
+  // 全画面では本体の背景が見えないので、同じ背景を敷く
+  screen.style.backgroundColor = '#f3efe5';
+  screen.style.backgroundImage = document.body.style.backgroundImage;
+  screen.style.backgroundSize = document.body.style.backgroundSize;
+  const { title, logo } = state.design;
+  screen.innerHTML = `
+    <div class="champion-card">
+      ${logo ? `<img src="${esc(logo)}" alt="ロゴ">` : ''}
+      ${title ? `<p class="champion-card-title">${esc(title)}</p>` : ''}
+      <span class="champion-card-label">優勝</span>
+      <p class="champion-card-name" id="champion-card-name">${esc(info.first)}</p>
+      ${info.second !== null ? `<p class="champion-card-second">準優勝: ${esc(info.second)}</p>` : ''}
+      <p class="champion-card-hint">クリックかEscキーで閉じる</p>
+    </div>`;
+  fitChampionName();
+}
+
+/** 長い名前でも1行で枠に収まるよう文字を小さくする */
+function fitChampionName() {
+  const name = document.getElementById('champion-card-name');
+  if (!name) return;
+  name.style.fontSize = '';
+  name.style.whiteSpace = '';
+  let size = parseFloat(getComputedStyle(name).fontSize);
+  while (name.scrollWidth > name.clientWidth && size > 16) {
+    size *= 0.92;
+    name.style.fontSize = `${size}px`;
+  }
+  if (name.scrollWidth > name.clientWidth) name.style.whiteSpace = 'normal';
+}
+
+function openChampionScreen() {
+  championOpen = true;
+  renderChampionScreen();
+  const screen = document.getElementById('champion-screen');
+  // 全画面にできないブラウザでも、ウィンドウいっぱいには表示される
+  if (screen && screen.requestFullscreen) {
+    screen.requestFullscreen().then(() => {
+      championFullscreen = true;
+      fitChampionName();
+    }).catch(() => {});
+  }
+}
+
+function closeChampionScreen() {
+  championOpen = false;
+  const screen = document.getElementById('champion-screen');
+  if (screen) screen.remove();
+  if (championFullscreen && document.fullscreenElement) document.exitFullscreen().catch(() => {});
+  championFullscreen = false;
+}
+
+document.addEventListener('click', e => {
+  if (e.target.id === 'champion-open') openChampionScreen();
+  else if (e.target.closest('#champion-screen')) closeChampionScreen();
+});
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && championOpen) closeChampionScreen();
+});
+// 全画面中のEscはブラウザが処理するので、抜けたことを見て閉じる
+document.addEventListener('fullscreenchange', () => {
+  if (!document.fullscreenElement && championFullscreen) closeChampionScreen();
+  else fitChampionName();
+});
+window.addEventListener('resize', fitChampionName);
+
+let slotHasChampion = false;
+
 function render() {
   renderShareSlot();
   if (state.rounds) {
-    if (!designSlot.firstChild) renderDesignSlot();
+    // 優勝者が決まったら、画像の範囲に「優勝者」を出し入れする
+    const hasChampion = !!championInfo();
+    if (!designSlot.firstChild || (hasChampion !== slotHasChampion && !designSlot.contains(document.activeElement))) renderDesignSlot();
     renderBracket();
   } else if (share && !share.loaded) {
     designSlot.innerHTML = '';
@@ -1076,6 +1221,7 @@ function render() {
     designSlot.innerHTML = '';
     renderSetup();
   }
+  renderChampionScreen();
 }
 
 /* ---------- デザイン ---------- */
@@ -1170,6 +1316,8 @@ function renderDesignSlot() {
   const targets = [['all', '全体(全回戦を1枚に)']];
   // 全2回戦の表では「全体」と同じになるので出さない
   if (state.rounds.length > 2) targets.push(['to2', '2回戦まで(1回戦と2回戦を1枚に)']);
+  slotHasChampion = !!championInfo();
+  if (slotHasChampion) targets.push(['champion', '優勝者']);
   state.rounds.forEach((_, r) => targets.push([String(r), `${roundName(r)}だけ`]));
   if (!targets.some(([v]) => v === exportTarget)) exportTarget = 'all';
   designSlot.innerHTML = `
@@ -1625,6 +1773,7 @@ function drawByes(ctx, block, x, y, theme) {
 function exportScope(target) {
   if (target === 'all') return { shown: state.rounds.map((_, r) => r), label: '' };
   if (target === 'to2') return { shown: [0, 1], label: '2回戦まで' };
+  if (target === 'champion') return { shown: [], label: '優勝者' };
   return { shown: [Number(target)], label: roundName(Number(target)) };
 }
 
@@ -1672,6 +1821,11 @@ async function renderImage(target) {
     ctx.fillRect(0, 0, IMG.w, IMG.h);
   }
   ctx.textBaseline = 'middle';
+
+  if (target === 'champion') {
+    await drawChampionImage(ctx, theme);
+    return canvasToBlob(canvas);
+  }
 
   // 見出しカード(ロゴ・大会名・優勝者を横一列に)
   const cardW = availW;
@@ -1745,9 +1899,78 @@ async function renderImage(target) {
     ctx.restore();
   }
 
+  return canvasToBlob(canvas);
+}
+
+function canvasToBlob(canvas) {
   return new Promise((resolve, reject) => {
     canvas.toBlob(blob => (blob ? resolve(blob) : reject(new Error('toBlob failed'))), 'image/png');
   });
+}
+
+/** 優勝者の画像。ロゴ・大会名・優勝・名前・準優勝を中央に縦に並べる。 */
+async function drawChampionImage(ctx, theme) {
+  const info = championInfo();
+  if (!info) throw new Error('優勝者が決まっていません');
+  const { title, logo: logoSrc } = state.design;
+  const cardX = 120, cardY = 70, cardW = IMG.w - 240, cardH = IMG.h - 140;
+  const textW = cardW - 160;
+  const centerX = IMG.w / 2;
+
+  roundedRect(ctx, cardX, cardY, cardW, cardH, 24);
+  ctx.fillStyle = '#fffdf8';
+  ctx.fill();
+  ctx.strokeStyle = theme.accent;
+  ctx.lineWidth = 6;
+  ctx.stroke();
+
+  let logo = null, logoW = 0, logoH = 0;
+  if (logoSrc) {
+    logo = new Image();
+    logo.src = logoSrc;
+    await logo.decode();
+    const ratio = Math.min(520 / logo.naturalWidth, 190 / logo.naturalHeight);
+    logoW = logo.naturalWidth * ratio;
+    logoH = logo.naturalHeight * ratio;
+  }
+
+  // 載せるものの高さを足して、カードの中央にそろえる
+  const parts = [];
+  if (logo) parts.push({ height: logoH + 30, draw: y => ctx.drawImage(logo, centerX - logoW / 2, y, logoW, logoH) });
+  if (title) {
+    parts.push({ height: 90, draw: y => {
+      ctx.fillStyle = '#24231f';
+      drawFitted(ctx, title, centerX, y + 36, textW, 58, 20, s => `bold ${s}px ${FONT_SERIF}`);
+    } });
+  }
+  parts.push({ height: 130, draw: y => {
+    ctx.font = `bold 70px ${FONT_SANS}`;
+    const pillW = ctx.measureText('優勝').width + 70;
+    roundedRect(ctx, centerX - pillW / 2, y, pillW, 104, 14);
+    ctx.fillStyle = theme.accent;
+    ctx.fill();
+    ctx.fillStyle = '#ffffff';
+    ctx.fillText('優勝', centerX, y + 54);
+  } });
+  parts.push({ height: 240, draw: y => {
+    ctx.fillStyle = '#1b1a17';
+    drawFitted(ctx, info.first, centerX, y + 112, textW, 190, 40, s => `bold ${s}px ${FONT_SERIF}`);
+  } });
+  if (info.second !== null) {
+    parts.push({ height: 80, draw: y => {
+      ctx.fillStyle = '#5c5a52';
+      drawFitted(ctx, `準優勝: ${info.second}`, centerX, y + 40, textW, 52, 20, s => `${s}px ${FONT_SANS}`);
+    } });
+  }
+  const total = parts.reduce((sum, part) => sum + part.height, 0);
+  let y = cardY + (cardH - total) / 2;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  parts.forEach(part => {
+    part.draw(y);
+    y += part.height;
+  });
+  ctx.textAlign = 'left';
 }
 
 app.addEventListener('click', e => {
