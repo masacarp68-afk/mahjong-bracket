@@ -8,8 +8,8 @@ const html = fs.readFileSync(path.join(__dirname, 'index.html'), 'utf8');
 const code = html.split('/*LOGIC-START*/')[1].split('/*LOGIC-END*/')[0];
 const ctx = { crypto: require('crypto').webcrypto, Uint32Array, Math, Set, Array };
 vm.createContext(ctx);
-vm.runInContext(code + '\nthis.api={parseNames,findDuplicates,tableLabel,roundShape,buildBracket,bracketSides,planSides,normalizeSeeds,newShareId,applyStreamEvent,resultChanges,resultPatch,removedResultCount,cleanResults,parseSharedBracket,parseSharedDesign,sameSourcePairs,resolveRef,pruneResults,extractColors,buildPalettes,themeFrom,contrastRatio};', ctx);
-const { parseNames, findDuplicates, tableLabel, roundShape, buildBracket, bracketSides, planSides, normalizeSeeds, newShareId, applyStreamEvent, resultChanges, resultPatch, removedResultCount, cleanResults, parseSharedBracket, parseSharedDesign, sameSourcePairs, resolveRef, pruneResults, extractColors, buildPalettes, themeFrom, contrastRatio } = ctx.api;
+vm.runInContext(code + '\nthis.api={parseNames,findDuplicates,tableLabel,roundShape,buildBracket,bracketSides,planSides,placeSideTables,championBox,normalizeSeeds,newShareId,applyStreamEvent,resultChanges,resultPatch,removedResultCount,cleanResults,parseSharedBracket,parseSharedDesign,sameSourcePairs,resolveRef,pruneResults,extractColors,buildPalettes,themeFrom,contrastRatio};', ctx);
+const { parseNames, findDuplicates, tableLabel, roundShape, buildBracket, bracketSides, planSides, placeSideTables, championBox, normalizeSeeds, newShareId, applyStreamEvent, resultChanges, resultPatch, removedResultCount, cleanResults, parseSharedBracket, parseSharedDesign, sameSourcePairs, resolveRef, pruneResults, extractColors, buildPalettes, themeFrom, contrastRatio } = ctx.api;
 
 // 配色: 白地に赤と青のロゴから、白より赤・青を優先して拾う
 {
@@ -305,6 +305,29 @@ for (const n of [16, 40, 64]) {
   assert.strictEqual(design.palettes.length, 1);
   assert.strictEqual(parseSharedDesign('こわれた').pattern, 'gradient');
   assert.strictEqual(parseSharedDesign(JSON.stringify({ logo: 'data:image/png;base64,AAAA' })).logo, 'data:image/png;base64,AAAA');
+}
+
+// 全体画像の優勝表示: どの人数でも卓に重ならず、決勝卓の上に収まる
+{
+  const W = 1872, H = 860, top = 100;
+  for (let n = 5; n <= 64; n++) {
+    const rounds = buildBracket(n, [], undefined, 2);
+    const plan = planSides(rounds, bracketSides(rounds, rounds.map((_, r) => r)), W, H, 4);
+    placeSideTables(plan, rounds, top, H);
+    const finalIndex = plan.cols.findIndex(col => col.r === rounds.length - 1);
+    const box = championBox(plan, finalIndex, top);
+    assert.ok(box, `n=${n} 優勝の枠がない`);
+    assert.ok(box.height >= 90, `n=${n} 枠の高さ${box.height}`);
+    assert.ok(box.width >= plan.colW - 0.01, `n=${n} 枠の幅${box.width}`);
+    assert.ok(box.y >= top && box.y + box.height <= plan.cols[finalIndex].places[0].y, `n=${n} 枠が決勝卓に重なる`);
+    plan.cols.forEach(col => {
+      if (col.x + plan.colW <= box.x || col.x >= box.x + box.width) return;
+      col.places.forEach(place => {
+        const overlaps = place.y < box.y + box.height && place.y + place.h > box.y;
+        assert.ok(!overlaps, `n=${n} 優勝の枠が${col.r + 1}回戦の卓に重なる`);
+      });
+    });
+  }
 }
 
 // シード指定の整理: いない人を外し、枠を超えた分は後ろから外し、重複はまとめる
